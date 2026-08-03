@@ -355,7 +355,7 @@ class MainGUI(tk.Tk):
                 status_display = "⚡ 已觸發"
                 tag = "UPPER_TRIGGERED"
         elif rule.status == STATUS_ACTIVE:
-            status_display = "● 監控中"
+            status_display = "▶ 監控中"
             tag = "ACTIVE"
 
         trig_at_str = rule.triggered_at or "--"
