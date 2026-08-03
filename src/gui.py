@@ -10,10 +10,13 @@ from tkinter import ttk, messagebox, simpledialog
 from datetime import datetime
 from typing import Optional, Dict, Any
 
+import threading
+import time
+
 from src.storage import StorageManager
 from src.notifier import Notifier
 from src.trigger_engine import TriggerEngine, TriggerRule, STATUS_ACTIVE, STATUS_TRIGGERED, STATUS_PAUSED
-from src.client import ShioajiClientWrapper
+from src.client import ShioajiClientWrapper, is_internet_available
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +43,12 @@ class MainGUI(tk.Tk):
         # 佇列機制 (確保 Thread-Safe 更新 UI)
         self.gui_queue = queue.Queue()
 
-        # 互動狀態
+        # 互動狀態與網路監控
         self._selection_timer = None
         self._hover_item = None
+        self._is_closing = False
+        self.is_network_connected = is_internet_available()
+        self.network_warned = False
         self._drag_item = None
         self.sort_state = None  # None (手動自訂) | ("code", "ASC") | ("code", "DESC") | ("status", "ASC") | ("status", "DESC")
         self._cell_labels: Dict[str, tk.Label] = {}  # 專屬於「漲跌幅」單欄的文字標籤字典
@@ -65,8 +71,9 @@ class MainGUI(tk.Tk):
         # 視窗關閉處理
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-        # 定時輪詢 GUI 佇列
+        # 定時輪詢 GUI 佇列與背景網路連線監控
         self.after(100, self._process_gui_queue)
+        self._start_network_monitor()
 
         # 初始化資料展示
         self._reload_all_rules_in_ui()
@@ -94,6 +101,7 @@ class MainGUI(tk.Tk):
         self.style.configure("Header.TLabel", background=PRIMARY_COLOR, foreground="#FFFFFF", font=("Microsoft JhengHei", 12, "bold"))
         self.style.configure("Card.TFrame", background="#FFFFFF", relief="solid", borderwidth=1)
         self.style.configure("Primary.TButton", font=("Microsoft JhengHei", 10, "bold"), padding=6)
+        self.style.configure("Warning.TButton", font=("Microsoft JhengHei", 10, "bold"), padding=6)
         self.style.configure("Accent.TButton", font=("Microsoft JhengHei", 10, "bold"), padding=6)
         
         # Treeview 表格樣式
@@ -137,8 +145,8 @@ class MainGUI(tk.Tk):
         self.chk_tg.pack(side=tk.LEFT, padx=5)
 
         # 控制按鈕
-        btn_login = ttk.Button(right_panel, text="🔑 登入 API", command=self._on_click_login)
-        btn_login.pack(side=tk.LEFT, padx=4)
+        self.btn_login = ttk.Button(right_panel, text="🔑 登入 API", command=self._on_click_login, style="Primary.TButton")
+        self.btn_login.pack(side=tk.LEFT, padx=4)
 
         self.btn_mock = ttk.Button(right_panel, text="🧪 啟動模擬行情", command=self._on_toggle_mock)
         self.btn_mock.pack(side=tk.LEFT, padx=4)
@@ -329,6 +337,19 @@ class MainGUI(tk.Tk):
         """來自 Notifier 的通知紀錄廣播"""
         self.gui_queue.put(("LOG_UPDATED" if is_update else "LOG_ADDED", log_entry))
 
+    def _start_network_monitor(self):
+        """背景網路連線監控服務 Thread"""
+        def monitor_loop():
+            while not self._is_closing:
+                connected = is_internet_available()
+                if connected != self.is_network_connected:
+                    self.is_network_connected = connected
+                    self.gui_queue.put(("NETWORK_STATUS_CHANGED", connected))
+                time.sleep(3.0)
+
+        t = threading.Thread(target=monitor_loop, daemon=True)
+        t.start()
+
     def _process_gui_queue(self):
         """主執行緒輪詢佇列並更新 Tkinter 元件"""
         try:
@@ -351,6 +372,24 @@ class MainGUI(tk.Tk):
                 elif msg_type in ["LOG_ADDED", "LOG_UPDATED"]:
                     log_entry = data
                     self._add_or_update_log_in_treeview(log_entry)
+
+                elif msg_type == "NETWORK_STATUS_CHANGED":
+                    is_connected = data
+                    if not is_connected:
+                        self.lbl_api_status.config(text="🔴 網路中斷", bg="#DC3545", fg="#FFFFFF")
+                        self.btn_login.config(text="🔄 點擊重連", style="Warning.TButton")
+                        self.lbl_status_msg.config(text="⚠️ 偵測到網路連線中斷！請檢查網路連線後，點擊右上方 [🔄 點擊重連]。")
+                        if not self.network_warned:
+                            self.network_warned = True
+                            self.notifier.notify(
+                                title="網路連線中斷",
+                                message="系統偵測到網路連線已中斷，觸價通知暫時失效！請恢復網路連線後點擊重連。",
+                                stock_code="SYS",
+                                trigger_type="TEST"
+                            )
+                    else:
+                        self.lbl_status_msg.config(text="✅ 網路連線已恢復，請點擊右上方 [🔄 點擊重連] 重新登入 API。")
+                        self.btn_login.config(text="🔄 點擊重連", style="Warning.TButton")
 
         except Exception as e:
             logger.error(f"GUI 佇列處理異常: {e}")
@@ -469,13 +508,19 @@ class MainGUI(tk.Tk):
         self._update_all_cell_overlays()
 
     def _update_connection_status_ui(self):
-        """更新頂部 API 與 Telegram 狀態燈標籤"""
-        if self.client.is_logged_in:
-            self.lbl_api_status.config(text="🟢 Shioaji: 已連線", bg="#28A745")
+        """更新頂部 API 與 Telegram 狀態燈標籤」"""
+        if not self.is_network_connected:
+            self.lbl_api_status.config(text="🔴 網路中斷", bg="#DC3545", fg="#FFFFFF")
+            self.btn_login.config(text="🔄 點擊重連", style="Warning.TButton")
+        elif self.client.is_logged_in:
+            self.lbl_api_status.config(text="🟢 Shioaji: 已連線", bg="#28A745", fg="#FFFFFF")
+            self.btn_login.config(text="🔑 登入 API", style="Primary.TButton")
         elif self.client.mock_running:
             self.lbl_api_status.config(text="🟡 模擬行情測試中", bg="#FFC107", fg="#000000")
+            self.btn_login.config(text="🔑 登入 API", style="Primary.TButton")
         else:
             self.lbl_api_status.config(text="⚪ Shioaji: 離線", bg="#555555", fg="#FFFFFF")
+            self.btn_login.config(text="🔑 登入 API", style="Primary.TButton")
 
         if not self.notifier.telegram_enabled:
             self.lbl_tg_status.config(text="⏸️ Telegram: 已關閉", bg="#555555", fg="#FFFFFF")
@@ -616,14 +661,27 @@ class MainGUI(tk.Tk):
         self.ent_note.delete(0, tk.END)
 
     def _on_click_login(self):
-        """手動觸發 API 登入」"""
+        """手動觸發 API 登入與網路重連」"""
+        if not is_internet_available():
+            messagebox.showerror("網路中斷", "目前網路連線仍未恢復，請先檢查 Wi-Fi 或網路連線狀態！")
+            return
+
+        self.lbl_status_msg.config(text="正在重新連線 Shioaji API 並恢復行情訂閱...")
         success = self.client.login()
         if success:
-            messagebox.showinfo("登入成功", "Shioaji API 登入成功！")
             for code in self.engine.rules.keys():
                 self.client.subscribe(code)
+            messagebox.showinfo("連線成功", "Shioaji API 登入/重連成功！已恢復即時行情監控。")
+            self.lbl_status_msg.config(text="✅ 重新連線成功！即時行情已恢復監控。")
+            self.network_warned = False
+            self.notifier.notify(
+                title="網路連線恢復",
+                message="Shioaji API 重新登入成功，即時行情觸價監控已全面恢復！",
+                stock_code="SYS",
+                trigger_type="TEST"
+            )
         else:
-            messagebox.showerror("登入失敗", "Shioaji API 登入失敗！請確認 .env 設定與網路連線。")
+            messagebox.showerror("登入失敗", "Shioaji API 登入失敗！請確認 .env 設定與 API KEY。")
         self._update_connection_status_ui()
 
     def _on_toggle_mock(self):
@@ -989,6 +1047,7 @@ class MainGUI(tk.Tk):
 
     def on_closing(self):
         """完全關閉應用程式與清除執行緒」"""
+        self._is_closing = True
         try:
             self.client.stop_mock_ticks()
             self.engine.save_to_storage()

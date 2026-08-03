@@ -10,7 +10,20 @@ import threading
 from typing import Dict, Any, Optional, Callable
 from dotenv import load_dotenv
 
+import socket
+
 logger = logging.getLogger(__name__)
+
+def is_internet_available(host: str = "8.8.8.8", port: int = 53, timeout: float = 2.5) -> bool:
+    """速測網際網路連線狀態 (經由 DNS socket 連線測試)"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        s.connect((host, port))
+        s.close()
+        return True
+    except Exception:
+        return False
 
 # 嘗試載入 Shioaji 庫
 try:
