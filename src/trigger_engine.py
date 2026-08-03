@@ -198,10 +198,18 @@ class TriggerEngine:
         :param change_rate: 漲跌幅 (%)
         """
         code = code.strip().upper()
-        if code not in self.rules:
+        target_code = code
+        if target_code not in self.rules:
+            # 別名容錯尋找 (例如傳入 TXFH6 或 TXFR1，但規則為 TXF)
+            for r_code in self.rules.keys():
+                if (r_code in target_code) or (target_code in r_code) or (r_code in ['TXF', 'TX00', 'FITX'] and 'TXF' in target_code):
+                    target_code = r_code
+                    break
+
+        if target_code not in self.rules:
             return
 
-        rule = self.rules[code]
+        rule = self.rules[target_code]
         rule.last_price = float(price)
         rule.change = float(change)
         rule.change_rate = float(change_rate)

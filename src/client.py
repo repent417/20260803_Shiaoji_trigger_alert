@@ -32,6 +32,7 @@ class ShioajiClientWrapper:
         self.api = None
         self.is_logged_in = False
         self.subscribed_codes = set()
+        self.code_alias_map: Dict[str, str] = {}  # 紀錄 (TXFH6 / TXFR1 -> TXF) 等行情與規則對照
         self.tick_callback = tick_callback  # 簽名: (code, price, change, change_rate)
 
         # Mock 模擬發送器
@@ -41,7 +42,10 @@ class ShioajiClientWrapper:
             "2330": 850.0,
             "2317": 200.0,
             "2454": 1200.0,
-            "0050": 160.0
+            "0050": 160.0,
+            "TXF": 23500.0,
+            "MXF": 23500.0,
+            "TMF": 23500.0
         }
 
     def login(self) -> bool:
@@ -85,10 +89,14 @@ class ShioajiClientWrapper:
 
         def on_tick_handler(exchange, tick):
             try:
-                code = getattr(tick, 'code', '') or getattr(tick, 'symbol', '')
+                raw_code = (getattr(tick, 'code', '') or getattr(tick, 'symbol', '')).strip().upper()
+                # 使用對照表找回使用者原先輸入的代號 (例如 TXFH6 -> TXF)
+                code = self.code_alias_map.get(raw_code, raw_code)
+
                 close_price = float(getattr(tick, 'close', 0.0))
-                change = float(getattr(tick, 'change_price', 0.0))
-                change_rate = float(getattr(tick, 'change_rate', 0.0))
+                change = float(getattr(tick, 'price_chg', getattr(tick, 'change_price', 0.0)))
+                change_rate = float(getattr(tick, 'pct_chg', getattr(tick, 'change_rate', 0.0)))
+
                 if self.tick_callback and code and close_price > 0:
                     self.tick_callback(code, close_price, change, change_rate)
             except Exception as e:
@@ -170,7 +178,7 @@ class ShioajiClientWrapper:
         """
         查詢股票/期貨合約資訊 (名稱與代號)
         """
-        code = code.strip().upper()
+        user_code = code.strip().upper()
         default_names = {
             "2330": "台積電", "2317": "鴻海", "2454": "聯發科", "0050": "元大台灣50",
             "TXF": "臺指期近一", "TXFR1": "臺指期近一", "TX00": "臺指期近一", "FITX": "臺指期近一",
@@ -178,27 +186,33 @@ class ShioajiClientWrapper:
             "TMF": "微臺指近一", "TMFR1": "微臺指近一", "TM00": "微臺指近一"
         }
 
-        name = default_names.get(code, f"商品 {code}")
+        name = default_names.get(user_code, f"商品 {user_code}")
         
-        contract = self.get_contract(code)
+        contract = self.get_contract(user_code)
         if contract:
             c_name = getattr(contract, 'name', '')
-            c_code = getattr(contract, 'code', '') or getattr(contract, 'symbol', '')
             if c_name:
                 name = c_name
-            if c_code:
-                code = c_code
 
-        return {"code": code, "name": name}
+        return {"code": user_code, "name": name}
 
     def subscribe(self, code: str) -> bool:
         """訂閱指定股票或期貨的即時行情"""
-        code = code.strip().upper()
+        user_code = code.strip().upper()
+        self.code_alias_map[user_code] = user_code
 
         if self.is_logged_in and self.api:
-            contract = self.get_contract(code)
+            contract = self.get_contract(user_code)
             if contract:
-                actual_code = getattr(contract, 'code', '') or getattr(contract, 'symbol', '') or code
+                actual_code = getattr(contract, 'code', '') or getattr(contract, 'symbol', '') or user_code
+                target_code = getattr(contract, 'target_code', '')
+                symbol_code = getattr(contract, 'symbol', '')
+
+                # 建立所有可能的代號映照回原使用者代號 (例如 TXFH6 -> TXF, TXFR1 -> TXF)
+                if actual_code: self.code_alias_map[actual_code.upper()] = user_code
+                if target_code: self.code_alias_map[target_code.upper()] = user_code
+                if symbol_code: self.code_alias_map[symbol_code.upper()] = user_code
+
                 self.subscribed_codes.add(actual_code)
                 try:
                     self.api.quote.subscribe(
@@ -206,22 +220,22 @@ class ShioajiClientWrapper:
                         quote_type=sj.constant.QuoteType.Tick,
                         version=sj.constant.QuoteVersion.v1
                     )
-                    logger.info(f"已向 Shioaji 訂閱商品 [{actual_code}] 即時 Tick 行情")
+                    logger.info(f"已向 Shioaji 訂閱商品 [{user_code} (實際代號 {actual_code})] 即時 Tick 行情")
                     return True
                 except Exception as e:
-                    logger.error(f"Shioaji 訂閱 [{actual_code}] 失敗: {e}")
+                    logger.error(f"Shioaji 訂閱 [{user_code}] 失敗: {e}")
             else:
-                logger.warning(f"無法找到 [{code}] 之合約，仍保留訂閱名稱")
-                self.subscribed_codes.add(code)
+                logger.warning(f"無法找到 [{user_code}] 之合約，仍保留訂閱名稱")
+                self.subscribed_codes.add(user_code)
         else:
-            self.subscribed_codes.add(code)
+            self.subscribed_codes.add(user_code)
 
         # 若離線或找不到合約，設定預設 mock 價格
-        if code not in self.mock_prices:
-            if code in ["TXF", "TXFR1", "TX00", "FITX", "MXF", "MXFR1", "TMF", "TMFR1"]:
-                self.mock_prices[code] = 23500.0
+        if user_code not in self.mock_prices:
+            if user_code in ["TXF", "TXFR1", "TX00", "FITX", "MXF", "MXFR1", "TMF", "TMFR1"]:
+                self.mock_prices[user_code] = 23500.0
             else:
-                self.mock_prices[code] = 100.0
+                self.mock_prices[user_code] = 100.0
 
         return False
 
