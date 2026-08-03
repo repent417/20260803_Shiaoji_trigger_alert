@@ -308,9 +308,9 @@ class MainGUI(tk.Tk):
         """來自 TriggerEngine 的規則更新廣播"""
         self.gui_queue.put(("RULE_UPDATED", (rule, is_deleted)))
 
-    def _on_notification_log_added(self, log_entry: Dict[str, Any]):
+    def _on_notification_log_added(self, log_entry: Dict[str, Any], is_update: bool = False):
         """來自 Notifier 的通知紀錄廣播"""
-        self.gui_queue.put(("LOG_ADDED", log_entry))
+        self.gui_queue.put(("LOG_UPDATED" if is_update else "LOG_ADDED", log_entry))
 
     def _process_gui_queue(self):
         """主執行緒輪詢佇列並更新 Tkinter 元件"""
@@ -331,9 +331,9 @@ class MainGUI(tk.Tk):
                     else:
                         self._update_rule_in_treeview(rule)
 
-                elif msg_type == "LOG_ADDED":
+                elif msg_type in ["LOG_ADDED", "LOG_UPDATED"]:
                     log_entry = data
-                    self._add_log_to_treeview(log_entry)
+                    self._add_or_update_log_in_treeview(log_entry)
 
         except Exception as e:
             logger.error(f"GUI 佇列處理異常: {e}")
@@ -397,9 +397,18 @@ class MainGUI(tk.Tk):
 
         self._update_cell_overlay(item_id)
 
-    def _add_log_to_treeview(self, log_entry: Dict[str, Any]):
-        """新增即時 Log 至下方紀錄表"""
-        tg_text = "✅ 已發送" if log_entry.get("telegram_sent") else "➖ 未發送"
+    def _add_or_update_log_in_treeview(self, log_entry: Dict[str, Any]):
+        """新增或更新即時 Log 至下方紀錄表"""
+        status = log_entry.get("telegram_status", "")
+        if status == "SENT" or log_entry.get("telegram_sent"):
+            tg_text = "✅ 已發送"
+        elif status == "SENDING":
+            tg_text = "⏳ 發送中..."
+        elif status == "FAILED":
+            tg_text = "❌ 發送失敗"
+        else:
+            tg_text = "➖ 未設定"
+
         values = (
             log_entry["timestamp"],
             log_entry["stock_code"],
@@ -407,7 +416,12 @@ class MainGUI(tk.Tk):
             log_entry["message"].replace("\n", " | "),
             tg_text
         )
-        self.log_tree.insert("", 0, values=values)
+
+        log_id = log_entry.get("id")
+        if log_id and self.log_tree.exists(log_id):
+            self.log_tree.item(log_id, values=values)
+        else:
+            self.log_tree.insert("", 0, iid=log_id, values=values)
 
     def _reload_all_rules_in_ui(self):
         """刷新 Treeview 顯示所有已儲存規則 (若有臨時排序，僅影響當前顯示，不覆蓋 order_index)"""
@@ -573,9 +587,9 @@ class MainGUI(tk.Tk):
         if new_chat is None:
             return
 
-        self.notifier.set_telegram_config(new_token.strip(), new_chat.strip())
+        self.notifier.set_telegram_config(new_token.strip(), new_chat.strip(), save_to_env=True)
         self._update_connection_status_ui()
-        messagebox.showinfo("設定更新", "Telegram Bot 設定已更新！可以點擊下方「測試 Telegram」驗證。")
+        messagebox.showinfo("設定更新", "Telegram Bot 設定已更新並自動儲存至 .env！下次開機時將自動載入。")
 
     def _on_test_toast(self):
         """測試桌面彈窗」"""

@@ -4,6 +4,10 @@ Main Application Entry Point
 """
 import sys
 import logging
+from dotenv import load_dotenv
+
+# 載入 .env 環境變數
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
