@@ -87,5 +87,21 @@ class TestTriggerEngine(unittest.TestCase):
         self.engine.process_tick("0050", 170.0)
         self.assertEqual(rule.status, STATUS_PAUSED)
 
+    def test_remove_rule_notification(self):
+        deleted_events = []
+        def on_update(rule, is_deleted=False):
+            if is_deleted:
+                deleted_events.append(rule.code)
+
+        self.engine.add_update_callback(on_update)
+        self.engine.add_or_update_rule(code="TXF", name="臺指期", upper_bound=24000.0)
+        self.assertIn("TXF", self.engine.rules)
+
+        # 刪除
+        removed = self.engine.remove_rule("TXF")
+        self.assertTrue(removed)
+        self.assertNotIn("TXF", self.engine.rules)
+        self.assertIn("TXF", deleted_events)
+
 if __name__ == "__main__":
     unittest.main()

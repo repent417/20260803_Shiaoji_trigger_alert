@@ -280,9 +280,9 @@ class MainGUI(tk.Tk):
         """來自 WebSocket 或 Mock 執行緒的 Tick 異步廣播」"""
         self.gui_queue.put(("TICK", (code, price, change, change_rate)))
 
-    def _on_rule_updated(self, rule: TriggerRule):
+    def _on_rule_updated(self, rule: TriggerRule, is_deleted: bool = False):
         """來自 TriggerEngine 的規則更新廣播"""
-        self.gui_queue.put(("RULE_UPDATED", rule))
+        self.gui_queue.put(("RULE_UPDATED", (rule, is_deleted)))
 
     def _on_notification_log_added(self, log_entry: Dict[str, Any]):
         """來自 Notifier 的通知紀錄廣播"""
@@ -298,8 +298,12 @@ class MainGUI(tk.Tk):
                     self.engine.process_tick(code, price, change, change_rate)
 
                 elif msg_type == "RULE_UPDATED":
-                    rule = data
-                    self._update_rule_in_treeview(rule)
+                    rule, is_deleted = data
+                    if is_deleted or rule.code not in self.engine.rules:
+                        if self.tree.exists(rule.code):
+                            self.tree.delete(rule.code)
+                    else:
+                        self._update_rule_in_treeview(rule)
 
                 elif msg_type == "LOG_ADDED":
                     log_entry = data
@@ -624,7 +628,8 @@ class MainGUI(tk.Tk):
             confirm = messagebox.askyesno("刪除確認", f"確定要刪除 [{code}] 的觸價設定嗎？")
             if confirm:
                 self.client.unsubscribe(code)
-                self.tree.delete(code)
+                if self.tree.exists(code):
+                    self.tree.delete(code)
                 self.engine.remove_rule(code)
                 self.lbl_status_msg.config(text=f"已刪除 [{code}] 觸價設定。")
 

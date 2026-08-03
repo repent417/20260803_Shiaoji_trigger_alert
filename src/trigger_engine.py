@@ -87,15 +87,19 @@ class TriggerEngine:
         self.update_callbacks: List[Callable[[TriggerRule], None]] = []
         self.load_from_storage()
 
-    def add_update_callback(self, callback: Callable[[TriggerRule], None]):
-        """註冊規則異動或價格更新回呼"""
+    def add_update_callback(self, callback: Callable[[TriggerRule, bool], None]):
+        """註冊規則異動或價格更新回呼 (簽名: (rule, is_deleted))"""
         self.update_callbacks.append(callback)
 
-    def _notify_callbacks(self, rule: TriggerRule):
+    def _notify_callbacks(self, rule: TriggerRule, is_deleted: bool = False):
         """廣播更新至所有監聽者"""
         for cb in self.update_callbacks:
             try:
-                cb(rule)
+                # 嘗試帶 is_deleted 呼叫，相容舊簽名
+                try:
+                    cb(rule, is_deleted)
+                except TypeError:
+                    cb(rule)
             except Exception as e:
                 logger.error(f"Engine update callback 異常: {e}")
 
@@ -148,7 +152,7 @@ class TriggerEngine:
             self.rules[code] = rule
 
         self.save_to_storage()
-        self._notify_callbacks(rule)
+        self._notify_callbacks(rule, is_deleted=False)
         return rule
 
     def remove_rule(self, code: str) -> bool:
@@ -157,7 +161,7 @@ class TriggerEngine:
         if code in self.rules:
             rule = self.rules.pop(code)
             self.save_to_storage()
-            self._notify_callbacks(rule)
+            self._notify_callbacks(rule, is_deleted=True)
             return True
         return False
 

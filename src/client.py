@@ -79,77 +79,149 @@ class ShioajiClientWrapper:
             return False
 
     def _setup_callbacks(self):
-        """設置 Shioaji Tick 回呼函數"""
+        """設置 Shioaji Tick 回呼函數 (股票與期貨)"""
         if not self.api:
             return
 
-        def on_tick_stk(exchange, tick):
+        def on_tick_handler(exchange, tick):
             try:
-                code = getattr(tick, 'code', '')
+                code = getattr(tick, 'code', '') or getattr(tick, 'symbol', '')
                 close_price = float(getattr(tick, 'close', 0.0))
-                # 漲跌幅度
                 change = float(getattr(tick, 'change_price', 0.0))
                 change_rate = float(getattr(tick, 'change_rate', 0.0))
                 if self.tick_callback and code and close_price > 0:
                     self.tick_callback(code, close_price, change, change_rate)
             except Exception as e:
-                logger.error(f"Tick stk callback 處理異常: {e}")
+                logger.error(f"Tick callback 處理異常: {e}")
 
         try:
-            self.api.quote.set_on_tick_stk_v1_callback(on_tick_stk)
+            self.api.quote.set_on_tick_stk_v1_callback(on_tick_handler)
+            self.api.quote.set_on_tick_fop_v1_callback(on_tick_handler)
+            logger.info("已成功註冊 股票與期貨/選擇權 之即時 Tick 回呼機制")
         except Exception as e:
-            logger.warning(f"設定 set_on_tick_stk_v1_callback 失敗: {e}")
+            logger.warning(f"設定 Tick 回呼函數失敗: {e}")
+
+    def get_contract(self, code: str) -> Any:
+        """
+        智慧解析股票或期貨合約 (支援 2330, TXF, TXFR1, TX00, FITX, MXF, TMF 等簡寫與正規期貨代號)
+        """
+        if not self.is_logged_in or not self.api:
+            return None
+
+        c = code.strip().upper()
+        # 期貨常見別名映射
+        alias_map = {
+            'TXF': ('TXF', 'TXFR1'), 'TX00': ('TXF', 'TXFR1'), 'FITX': ('TXF', 'TXFR1'), '台指': ('TXF', 'TXFR1'), '台指期': ('TXF', 'TXFR1'),
+            'MXF': ('MXF', 'MXFR1'), 'MX00': ('MXF', 'MXFR1'), '小台': ('MXF', 'MXFR1'), '小台指': ('MXF', 'MXFR1'),
+            'TMF': ('TMF', 'TMFR1'), 'TM00': ('TMF', 'TMFR1'), '微台': ('TMF', 'TMFR1'), '微台指': ('TMF', 'TMFR1')
+        }
+
+        # 1. 嘗試別名
+        if c in alias_map:
+            cat_name, sub_name = alias_map[c]
+            try:
+                cat_obj = getattr(self.api.Contracts.Futures, cat_name, None)
+                if cat_obj:
+                    contract = getattr(cat_obj, sub_name, None) or cat_obj[sub_name]
+                    if contract:
+                        return contract
+            except Exception:
+                pass
+
+        # 2. 嘗試 股票合約 (Stocks)
+        try:
+            contract = self.api.Contracts.Stocks.get(c) or self.api.Contracts.Stocks[c]
+            if contract:
+                return contract
+        except Exception:
+            pass
+
+        # 3. 嘗試 期貨合約 (Futures)
+        try:
+            # 檢查是否為期貨類別簡寫 (例如 TXF, MXF, TMF)
+            if hasattr(self.api.Contracts.Futures, c):
+                cat_obj = getattr(self.api.Contracts.Futures, c)
+                # 預設傳回該類別之近一合約
+                for preferred in ['TXFR1', 'MXFR1', 'TMFR1']:
+                    if hasattr(cat_obj, preferred):
+                        return getattr(cat_obj, preferred)
+                # 否則傳回第一個合約
+                for item in cat_obj:
+                    return item
+
+            # 檢查是否為具體期貨合約代號 (例如 TXFR1, TXF202608)
+            contract = self.api.Contracts.Futures.get(c)
+            if contract:
+                return contract
+        except Exception:
+            pass
+
+        # 4. 嘗試 選擇權合約 (Options)
+        try:
+            contract = self.api.Contracts.Options.get(c)
+            if contract:
+                return contract
+        except Exception:
+            pass
+
+        return None
 
     def get_stock_info(self, code: str) -> Dict[str, str]:
         """
-        查詢股票合約資訊 (名稱與市場類別)
+        查詢股票/期貨合約資訊 (名稱與代號)
         """
         code = code.strip().upper()
         default_names = {
-            "2330": "台積電",
-            "2317": "鴻海",
-            "2454": "聯發科",
-            "0050": "元大台灣50",
-            "2308": "台達電",
-            "2382": "廣達",
-            "3231": "緯創",
-            "2603": "長榮"
+            "2330": "台積電", "2317": "鴻海", "2454": "聯發科", "0050": "元大台灣50",
+            "TXF": "臺指期近一", "TXFR1": "臺指期近一", "TX00": "臺指期近一", "FITX": "臺指期近一",
+            "MXF": "小臺指近一", "MXFR1": "小臺指近一", "MX00": "小臺指近一",
+            "TMF": "微臺指近一", "TMFR1": "微臺指近一", "TM00": "微臺指近一"
         }
 
-        name = default_names.get(code, f"個股 {code}")
+        name = default_names.get(code, f"商品 {code}")
         
-        if self.is_logged_in and self.api:
-            try:
-                contract = self.api.Contracts.Stocks.get(code) or self.api.Contracts.Stocks[code]
-                if contract:
-                    name = getattr(contract, 'name', name) or name
-            except Exception as e:
-                logger.debug(f"合約查詢 {code} 失敗或無結果: {e}")
+        contract = self.get_contract(code)
+        if contract:
+            c_name = getattr(contract, 'name', '')
+            c_code = getattr(contract, 'code', '') or getattr(contract, 'symbol', '')
+            if c_name:
+                name = c_name
+            if c_code:
+                code = c_code
 
         return {"code": code, "name": name}
 
     def subscribe(self, code: str) -> bool:
-        """訂閱指定股票的即時行情"""
+        """訂閱指定股票或期貨的即時行情"""
         code = code.strip().upper()
-        self.subscribed_codes.add(code)
 
         if self.is_logged_in and self.api:
-            try:
-                contract = self.api.Contracts.Stocks.get(code) or self.api.Contracts.Stocks[code]
-                if contract:
+            contract = self.get_contract(code)
+            if contract:
+                actual_code = getattr(contract, 'code', '') or getattr(contract, 'symbol', '') or code
+                self.subscribed_codes.add(actual_code)
+                try:
                     self.api.quote.subscribe(
                         contract,
                         quote_type=sj.constant.QuoteType.Tick,
                         version=sj.constant.QuoteVersion.v1
                     )
-                    logger.info(f"已向 Shioaji 訂閱 {code} 即時 Tick 行情")
+                    logger.info(f"已向 Shioaji 訂閱商品 [{actual_code}] 即時 Tick 行情")
                     return True
-            except Exception as e:
-                logger.error(f"Shioaji 訂閱 {code} 失敗: {e}")
+                except Exception as e:
+                    logger.error(f"Shioaji 訂閱 [{actual_code}] 失敗: {e}")
+            else:
+                logger.warning(f"無法找到 [{code}] 之合約，仍保留訂閱名稱")
+                self.subscribed_codes.add(code)
+        else:
+            self.subscribed_codes.add(code)
 
-        # 若離線，設定初始 mock 價格
+        # 若離線或找不到合約，設定預設 mock 價格
         if code not in self.mock_prices:
-            self.mock_prices[code] = 100.0
+            if code in ["TXF", "TXFR1", "TX00", "FITX", "MXF", "MXFR1", "TMF", "TMFR1"]:
+                self.mock_prices[code] = 23500.0
+            else:
+                self.mock_prices[code] = 100.0
 
         return False
 
@@ -160,18 +232,18 @@ class ShioajiClientWrapper:
             self.subscribed_codes.remove(code)
 
         if self.is_logged_in and self.api:
-            try:
-                contract = self.api.Contracts.Stocks.get(code) or self.api.Contracts.Stocks[code]
-                if contract:
+            contract = self.get_contract(code)
+            if contract:
+                try:
                     self.api.quote.unsubscribe(
                         contract,
                         quote_type=sj.constant.QuoteType.Tick,
                         version=sj.constant.QuoteVersion.v1
                     )
-                    logger.info(f"已向 Shioaji 取消訂閱 {code}")
+                    logger.info(f"已向 Shioaji 取消訂閱商品 [{code}]")
                     return True
-            except Exception as e:
-                logger.error(f"Shioaji 取消訂閱 {code} 失敗: {e}")
+                except Exception as e:
+                    logger.error(f"Shioaji 取消訂閱 [{code}] 失敗: {e}")
 
         return False
 
