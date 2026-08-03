@@ -1,0 +1,91 @@
+"""
+Unit tests for TriggerEngine and StorageManager
+"""
+import os
+import unittest
+import tempfile
+from src.notifier import Notifier
+from src.storage import StorageManager
+from src.trigger_engine import TriggerEngine, STATUS_ACTIVE, STATUS_TRIGGERED, STATUS_PAUSED
+
+class TestTriggerEngine(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_file = os.path.join(self.temp_dir.name, "test_rules.json")
+        self.storage = StorageManager(filepath=self.temp_file)
+        self.notifier = Notifier()
+        self.engine = TriggerEngine(notifier=self.notifier, storage=self.storage)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_add_rule(self):
+        rule = self.engine.add_or_update_rule(
+            code="2330",
+            name="台積電",
+            upper_bound=880.0,
+            lower_bound=820.0,
+            note="測試上界下界"
+        )
+        self.assertEqual(rule.code, "2330")
+        self.assertEqual(rule.name, "台積電")
+        self.assertEqual(rule.upper_bound, 880.0)
+        self.assertEqual(rule.lower_bound, 820.0)
+        self.assertEqual(rule.status, STATUS_ACTIVE)
+
+    def test_upper_trigger(self):
+        self.engine.add_or_update_rule(
+            code="2330",
+            name="台積電",
+            upper_bound=880.0,
+            lower_bound=820.0
+        )
+        # 價格小於 880，未觸發
+        self.engine.process_tick("2330", 870.0, change=10.0, change_rate=1.16)
+        rule = self.engine.rules["2330"]
+        self.assertEqual(rule.status, STATUS_ACTIVE)
+
+        # 價格達到 885，觸發突破上界
+        self.engine.process_tick("2330", 885.0, change=25.0, change_rate=2.9)
+        self.assertEqual(rule.status, STATUS_TRIGGERED)
+        self.assertEqual(rule.triggered_type, "UPPER")
+        self.assertEqual(rule.triggered_price, 885.0)
+
+    def test_lower_trigger(self):
+        self.engine.add_or_update_rule(
+            code="2317",
+            name="鴻海",
+            upper_bound=220.0,
+            lower_bound=190.0
+        )
+        # 價格高於 190，未觸發
+        self.engine.process_tick("2317", 195.0, change=-2.0, change_rate=-1.0)
+        rule = self.engine.rules["2317"]
+        self.assertEqual(rule.status, STATUS_ACTIVE)
+
+        # 價格跌至 188，觸發跌破下界
+        self.engine.process_tick("2317", 188.0, change=-9.0, change_rate=-4.5)
+        self.assertEqual(rule.status, STATUS_TRIGGERED)
+        self.assertEqual(rule.triggered_type, "LOWER")
+        self.assertEqual(rule.triggered_price, 188.0)
+
+    def test_reset_and_pause(self):
+        rule = self.engine.add_or_update_rule(code="0050", upper_bound=160.0)
+        self.engine.process_tick("0050", 165.0)
+        self.assertEqual(rule.status, STATUS_TRIGGERED)
+
+        # 重置
+        self.engine.reset_trigger("0050")
+        self.assertEqual(rule.status, STATUS_ACTIVE)
+        self.assertIsNone(rule.triggered_type)
+
+        # 暫停
+        self.engine.toggle_pause("0050")
+        self.assertEqual(rule.status, STATUS_PAUSED)
+
+        # 暫停期間價格再超過上界，不應觸發
+        self.engine.process_tick("0050", 170.0)
+        self.assertEqual(rule.status, STATUS_PAUSED)
+
+if __name__ == "__main__":
+    unittest.main()
