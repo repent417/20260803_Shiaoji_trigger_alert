@@ -170,20 +170,56 @@ class Notifier:
             logger.info(f"[Toast] {title} - {message}")
 
     def _send_telegram(self, log_entry: Dict[str, Any], title: str, message: str):
-        """透過 Telegram Bot API 發送訊息」"""
+        """透過 Telegram Bot API 發送美化 HTML 動態雙向主視角訊息」"""
         url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
-        text = f"🚨 *{title}*\n\n{message}\n\n⏰ 時間: `{log_entry['timestamp']}`"
+
+        trigger_type = log_entry.get("trigger_type", "")
+        timestamp = log_entry.get("timestamp", "")
+        clean_title = title.replace("股價觸價警示 ", "")
+
+        # 區分主視覺風格 (方案 3)
+        if trigger_type == "UPPER":
+            header_icon = "🚀🔥"
+            badge_title = f"【突破上界警示】{clean_title}"
+        elif trigger_type == "LOWER":
+            header_icon = "❄️📉"
+            badge_title = f"【跌破下界警示】{clean_title}"
+        elif trigger_type == "TEST":
+            header_icon = "🔔📱"
+            badge_title = "【Telegram 測試連線成功】"
+        else:
+            header_icon = "📢⚡"
+            badge_title = f"【觸價通知】{clean_title}"
+
+        border_line = "───────────────────"
+        html_text = f"{header_icon} <b>{badge_title}</b>\n"
+        html_text += f"{border_line}\n"
+
+        lines = [line.strip() for line in message.split("\n") if line.strip()]
+        for line in lines:
+            if "成交價" in line or "跌破" in line or "突破" in line:
+                html_text += f"🎯 <b>觸發條件</b>：<code>{line}</code>\n"
+            elif "即時價格" in line:
+                html_text += f"📊 <b>即時行情</b>：<code>{line}</code>\n"
+            elif "備註" in line:
+                html_text += f"📌 <b>{line}</b>\n"
+            else:
+                html_text += f"⚡ {line}\n"
+
+        html_text += f"{border_line}\n"
+        html_text += f"⏰ <b>通知時間</b>：<code>{timestamp}</code>"
+
         payload = {
             "chat_id": self.telegram_chat_id,
-            "text": text,
-            "parse_mode": "Markdown"
+            "text": html_text,
+            "parse_mode": "HTML"
         }
         try:
             resp = requests.post(url, data=payload, timeout=5)
             if resp.status_code == 200:
                 log_entry["telegram_status"] = "SENT"
                 log_entry["telegram_sent"] = True
-                logger.info(f"Telegram 通知發送成功 [{log_entry['stock_code']}]")
+                logger.info(f"Telegram 通知發送成功 [{log_entry.get('stock_code', '')}]")
             else:
                 log_entry["telegram_status"] = "FAILED"
                 log_entry["telegram_sent"] = False
