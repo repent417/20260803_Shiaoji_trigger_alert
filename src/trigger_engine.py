@@ -294,15 +294,21 @@ class TriggerEngine:
                 rule.triggered_price = price
                 rule.triggered_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-                title = f"股價觸價警示 [{rule.code} {rule.name}]"
-                full_msg = f"{t_msg}\n即時價格: ${price:.2f} (漲跌: {change:+.2f}, {change_rate:+.2f}%)\n備註: {rule.note or '無'}"
-                
+                bound_val = rule.upper_bound if t_type == "UPPER" else rule.lower_bound
+                title = f"[{rule.code} {rule.name}]"
+                full_msg = f"成交價 ${price:.2f} 已【{'突破上界' if t_type == 'UPPER' else '跌破下界'}】 ${bound_val:.2f}！"
+
                 # 發送多重通知
                 self.notifier.notify(
                     title=title,
                     message=full_msg,
                     stock_code=rule.code,
-                    trigger_type=t_type
+                    trigger_type=t_type,
+                    price=price,
+                    bound=bound_val,
+                    change=change,
+                    change_rate=change_rate,
+                    note=rule.note or "無"
                 )
                 self.save_to_storage()
 

@@ -102,13 +102,29 @@ class Notifier:
             except Exception as e:
                 logger.error(f"Log callback 執行失敗: {e}")
 
-    def notify(self, title: str, message: str, stock_code: str = "", trigger_type: str = ""):
+    def notify(
+        self,
+        title: str,
+        message: str,
+        stock_code: str = "",
+        trigger_type: str = "",
+        price: Optional[float] = None,
+        bound: Optional[float] = None,
+        change: float = 0.0,
+        change_rate: float = 0.0,
+        note: str = ""
+    ):
         """
         發送多重觸價通知
         :param title: 通知標題 (例: "股價觸價警示 [2330 台積電]")
-        :param message: 通知詳細內容 (例: "成交價 860 已突破設定上界 850！")
+        :param message: 通知詳細內容
         :param stock_code: 股票代號
-        :param trigger_type: UPPER (突破) / LOWER (跌破)
+        :param trigger_type: UPPER (突破) / LOWER (跌破) / TEST (測試)
+        :param price: 當前成交價
+        :param bound: 觸發界線價格
+        :param change: 漲跌金額
+        :param change_rate: 漲跌幅 (%)
+        :param note: 備註說明
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_id = f"log_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
@@ -129,6 +145,11 @@ class Notifier:
             "message": message,
             "stock_code": stock_code,
             "trigger_type": trigger_type,
+            "price": price,
+            "bound": bound,
+            "change": change,
+            "change_rate": change_rate,
+            "note": note,
             "telegram_status": tg_status,
             "telegram_sent": False
         }
@@ -170,44 +191,54 @@ class Notifier:
             logger.info(f"[Toast] {title} - {message}")
 
     def _send_telegram(self, log_entry: Dict[str, Any], title: str, message: str):
-        """透過 Telegram Bot API 發送美化 HTML 動態雙向主視角訊息」"""
+        """透過 Telegram Bot API 發送方案 A 雙欄極簡型 HTML 訊息 (精準控管行寬，絕不折行)"""
         url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
 
         trigger_type = log_entry.get("trigger_type", "")
         timestamp = log_entry.get("timestamp", "")
-        clean_title = title.replace("股價觸價警示 ", "")
+        time_only = timestamp.split(" ")[-1] if " " in timestamp else timestamp
+        clean_name = title.replace("股價觸價警示 ", "").replace("[", "").replace("]", "").strip()
 
-        # 區分主視覺風格 (方案 3)
+        price = log_entry.get("price")
+        bound = log_entry.get("bound")
+        change_rate = log_entry.get("change_rate", 0.0)
+        note = log_entry.get("note", "") or "無"
+
         if trigger_type == "UPPER":
-            header_icon = "🚀🔥"
-            badge_title = f"【突破上界警示】{clean_title}"
+            rate_str = f"▲+{change_rate:.2f}%" if change_rate >= 0 else f"▼{change_rate:.2f}%"
+            p_str = f"${price:.2f}" if price is not None else "--"
+            b_str = f"${bound:.2f}" if bound is not None else "--"
+            html_text = (
+                f"🚀🔥 <b>[{clean_name}] 突破警示</b>\n\n"
+                f"• <b>成交價</b>：<code>{p_str}</code> (<code>{rate_str}</code>)\n"
+                f"• <b>上界價</b>：<code>{b_str}</code>\n"
+                f"• <b>備　註</b>：{note}\n"
+                f"• <b>時　間</b>：<code>{time_only}</code>"
+            )
         elif trigger_type == "LOWER":
-            header_icon = "❄️📉"
-            badge_title = f"【跌破下界警示】{clean_title}"
+            rate_str = f"▲+{change_rate:.2f}%" if change_rate >= 0 else f"▼{change_rate:.2f}%"
+            p_str = f"${price:.2f}" if price is not None else "--"
+            b_str = f"${bound:.2f}" if bound is not None else "--"
+            html_text = (
+                f"❄️📉 <b>[{clean_name}] 跌破警示</b>\n\n"
+                f"• <b>成交價</b>：<code>{p_str}</code> (<code>{rate_str}</code>)\n"
+                f"• <b>下界價</b>：<code>{b_str}</code>\n"
+                f"• <b>備　註</b>：{note}\n"
+                f"• <b>時　間</b>：<code>{time_only}</code>"
+            )
         elif trigger_type == "TEST":
-            header_icon = "🔔📱"
-            badge_title = "【Telegram 測試連線成功】"
+            html_text = (
+                f"🔔📱 <b>【Telegram 測試連線成功】</b>\n\n"
+                f"• <b>狀　態</b>：<code>已連線成功</code>\n"
+                f"• <b>系統名</b>：<code>Shioaji 觸價通知</code>\n"
+                f"• <b>時　間</b>：<code>{time_only}</code>"
+            )
         else:
-            header_icon = "📢⚡"
-            badge_title = f"【觸價通知】{clean_title}"
-
-        border_line = "───────────────────"
-        html_text = f"{header_icon} <b>{badge_title}</b>\n"
-        html_text += f"{border_line}\n"
-
-        lines = [line.strip() for line in message.split("\n") if line.strip()]
-        for line in lines:
-            if "成交價" in line or "跌破" in line or "突破" in line:
-                html_text += f"🎯 <b>觸發條件</b>：<code>{line}</code>\n"
-            elif "即時價格" in line:
-                html_text += f"📊 <b>即時行情</b>：<code>{line}</code>\n"
-            elif "備註" in line:
-                html_text += f"📌 <b>{line}</b>\n"
-            else:
-                html_text += f"⚡ {line}\n"
-
-        html_text += f"{border_line}\n"
-        html_text += f"⏰ <b>通知時間</b>：<code>{timestamp}</code>"
+            html_text = (
+                f"📢⚡ <b>[{clean_name}] 觸價通知</b>\n\n"
+                f"• <b>內　容</b>：{message}\n"
+                f"• <b>時　間</b>：<code>{time_only}</code>"
+            )
 
         payload = {
             "chat_id": self.telegram_chat_id,
