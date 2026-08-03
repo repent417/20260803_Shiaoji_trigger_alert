@@ -39,6 +39,10 @@ class MainGUI(tk.Tk):
         # 佇列機制 (確保 Thread-Safe 更新 UI)
         self.gui_queue = queue.Queue()
 
+        # 互動狀態
+        self._selection_timer = None
+        self._hover_item = None
+
         # 註冊 Engine 與 Notifier 的異動廣播
         self.engine.add_update_callback(self._on_rule_updated)
         self.notifier.add_log_callback(self._on_notification_log_added)
@@ -213,10 +217,14 @@ class MainGUI(tk.Tk):
         self.tree.tag_configure("PAUSED", background="#F0F0F0", foreground="#888888")
         self.tree.tag_configure("UPPER_TRIGGERED", background="#FFE6E6", foreground="#CC0000", font=("Microsoft JhengHei", 10, "bold"))
         self.tree.tag_configure("LOWER_TRIGGERED", background="#E6FFE6", foreground="#008000", font=("Microsoft JhengHei", 10, "bold"))
+        self.tree.tag_configure("HOVER", background="#EBF5FB")  # 懸停柔和亮藍色
 
         # 事件綁定
         self.tree.bind("<Double-1>", self._on_tree_double_click)
         self.tree.bind("<Button-3>", self._on_tree_right_click)
+        self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+        self.tree.bind("<Motion>", self._on_tree_motion)
+        self.tree.bind("<Leave>", self._on_tree_leave)
 
     def _build_log_frame(self):
         """觸發通知歷史日誌區塊"""
@@ -347,7 +355,7 @@ class MainGUI(tk.Tk):
                 status_display = "⚡ 已觸發"
                 tag = "UPPER_TRIGGERED"
         elif rule.status == STATUS_ACTIVE:
-            status_display = "🟢 監控中"
+            status_display = "🔵 監控中"
             tag = "ACTIVE"
 
         trig_at_str = rule.triggered_at or "--"
@@ -560,6 +568,51 @@ class MainGUI(tk.Tk):
             self.log_tree.delete(item)
 
     # --- 右鍵與表格互動 ---
+
+    def _on_tree_select(self, event=None):
+        """當點擊選取某一列時，啟動無操作自動復原計時器"""
+        if self._selection_timer:
+            self.after_cancel(self._selection_timer)
+            self._selection_timer = None
+
+        # 點擊高亮後，2.5 秒無操作自動取消高亮，改回原本顏色
+        self._selection_timer = self.after(2500, self._auto_deselect_tree)
+
+    def _auto_deselect_tree(self):
+        """無操作後自動取消高亮選取，回復原本狀態顏色"""
+        try:
+            selected = self.tree.selection()
+            if selected:
+                self.tree.selection_remove(selected)
+        except Exception:
+            pass
+        self._selection_timer = None
+
+    def _on_tree_motion(self, event):
+        """滑鼠懸停 (Hover) 於某一列時動態高亮，滑過後改回"""
+        item = self.tree.identify_row(event.y)
+        if item != self._hover_item:
+            # 復原舊列
+            if self._hover_item and self.tree.exists(self._hover_item):
+                rule = self.engine.rules.get(self._hover_item)
+                if rule:
+                    self._update_rule_in_treeview(rule)
+
+            self._hover_item = item
+            if item and self.tree.exists(item):
+                # 取得該列當前 tags 並加入 HOVER 樣式
+                curr_tags = list(self.tree.item(item, "tags"))
+                if "HOVER" not in curr_tags:
+                    curr_tags.append("HOVER")
+                    self.tree.item(item, tags=curr_tags)
+
+    def _on_tree_leave(self, event=None):
+        """滑鼠離開表格區域時復原最後懸停列"""
+        if self._hover_item and self.tree.exists(self._hover_item):
+            rule = self.engine.rules.get(self._hover_item)
+            if rule:
+                self._update_rule_in_treeview(rule)
+        self._hover_item = None
 
     def _on_tree_double_click(self, event):
         """雙擊 Treeview 列：填入表單」"""
