@@ -215,9 +215,7 @@ class MainGUI(tk.Tk):
         card.grid_columnconfigure(0, weight=1)
 
         # 標籤顏色樣式配置
-        self.tree.tag_configure("ACTIVE_RISE", background="#FFFFFF", foreground="#CC0000")  # 上漲紅色
-        self.tree.tag_configure("ACTIVE_FALL", background="#FFFFFF", foreground="#008000")  # 下跌綠色
-        self.tree.tag_configure("ACTIVE", background="#FFFFFF", foreground="#000000")       # 平盤黑色
+        self.tree.tag_configure("ACTIVE", background="#FFFFFF", foreground="#000000")       # 平盤/預設黑色
         self.tree.tag_configure("PAUSED", background="#F0F0F0", foreground="#888888")
         self.tree.tag_configure("UPPER_TRIGGERED", background="#FFE6E6", foreground="#CC0000", font=("Microsoft JhengHei", 10, "bold"))
         self.tree.tag_configure("LOWER_TRIGGERED", background="#E6FFE6", foreground="#008000", font=("Microsoft JhengHei", 10, "bold"))
@@ -342,9 +340,9 @@ class MainGUI(tk.Tk):
         # 格式化顯示文字
         last_p_str = f"${rule.last_price:.2f}" if rule.last_price > 0 else "--"
         if rule.change > 0:
-            change_str = f"▲ +{rule.change:.2f} (+{rule.change_rate:.2f}%)"
+            change_str = f"🔺 +{rule.change:.2f} (+{rule.change_rate:.2f}%)"
         elif rule.change < 0:
-            change_str = f"▼ {rule.change:.2f} ({rule.change_rate:.2f}%)"
+            change_str = f"🔻 {rule.change:.2f} ({rule.change_rate:.2f}%)"
         else:
             change_str = "0.00 (0.00%)"
 
@@ -369,12 +367,7 @@ class MainGUI(tk.Tk):
                 tag = "UPPER_TRIGGERED"
         elif rule.status == STATUS_ACTIVE:
             status_display = "▶ 監控中"
-            if rule.change > 0:
-                tag = "ACTIVE_RISE"
-            elif rule.change < 0:
-                tag = "ACTIVE_FALL"
-            else:
-                tag = "ACTIVE"
+            tag = "ACTIVE"
 
         trig_at_str = rule.triggered_at or "--"
 
