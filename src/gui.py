@@ -43,6 +43,7 @@ class MainGUI(tk.Tk):
         self._selection_timer = None
         self._hover_item = None
         self._drag_item = None
+        self.sort_state = None  # None (手動自訂) | ("code", "ASC") | ("code", "DESC") | ("status", "ASC") | ("status", "DESC")
 
         # 註冊 Engine 與 Notifier 的異動廣播
         self.engine.add_update_callback(self._on_rule_updated)
@@ -181,13 +182,13 @@ class MainGUI(tk.Tk):
         columns = ("code", "name", "last_price", "change", "upper_bound", "lower_bound", "status", "triggered_at", "note")
         self.tree = ttk.Treeview(card, columns=columns, show="headings", selectmode="browse")
 
-        self.tree.heading("code", text="代號 ⇅", command=lambda: self._sort_tree("code"))
+        self.tree.heading("code", text="代號 ⇅", command=lambda: self._cycle_sort_column("code"))
         self.tree.heading("name", text="股票名稱")
         self.tree.heading("last_price", text="即時成交價")
         self.tree.heading("change", text="漲跌 (幅%)")
         self.tree.heading("upper_bound", text="⬆️ 突破上界")
         self.tree.heading("lower_bound", text="⬇️ 跌破下界")
-        self.tree.heading("status", text="監控狀態 ⇅", command=lambda: self._sort_tree("status"))
+        self.tree.heading("status", text="監控狀態 ⇅", command=lambda: self._cycle_sort_column("status"))
         self.tree.heading("triggered_at", text="最後觸發時間")
         self.tree.heading("note", text="備註")
 
@@ -285,6 +286,7 @@ class MainGUI(tk.Tk):
         self.context_menu.add_command(label="⬇️ 向下移動", command=lambda: self._on_menu_move("DOWN"))
         self.context_menu.add_command(label="🔝 移至最頂部", command=lambda: self._on_menu_move("TOP"))
         self.context_menu.add_command(label="🔚 移至最底部", command=lambda: self._on_menu_move("BOTTOM"))
+        self.context_menu.add_command(label="↺ 恢復自訂排序", command=self._reset_sort_to_custom)
         self.context_menu.add_separator()
         self.context_menu.add_command(label="⚡ 手動模擬價格突破測試", command=self._on_menu_mock_upper)
         self.context_menu.add_command(label="⚡ 手動模擬價格跌破測試", command=self._on_menu_mock_lower)
@@ -399,10 +401,20 @@ class MainGUI(tk.Tk):
         self.log_tree.insert("", 0, values=values)
 
     def _reload_all_rules_in_ui(self):
-        """刷新 Treeview 顯示所有已儲存規則"""
+        """刷新 Treeview 顯示所有已儲存規則 (若有臨時排序，僅影響當前顯示，不覆蓋 order_index)"""
         for item in self.tree.get_children():
             self.tree.delete(item)
-        for rule in self.engine.rules.values():
+
+        rules_list = list(self.engine.rules.values())
+
+        if self.sort_state is None:
+            rules_list.sort(key=lambda r: r.order_index)
+        elif self.sort_state[0] == "code":
+            rules_list.sort(key=lambda r: r.code, reverse=(self.sort_state[1] == "DESC"))
+        elif self.sort_state[0] == "status":
+            rules_list.sort(key=lambda r: r.status, reverse=(self.sort_state[1] == "DESC"))
+
+        for rule in rules_list:
             self._update_rule_in_treeview(rule)
             # 自動訂閱
             self.client.subscribe(rule.code)
@@ -696,17 +708,21 @@ class MainGUI(tk.Tk):
                 self.tree.move(self._drag_item, "", target_idx)
 
     def _on_drag_release(self, event):
-        """放開拖曳時，將 Treeview 順序儲存至 TriggerEngine」"""
+        """放開拖曳時，退出臨時檢視模式並將 Treeview 順序儲存為新的自訂順序」"""
         if self._drag_item:
             current_codes = list(self.tree.get_children())
             self.engine.reorder_by_codes(current_codes)
             self._drag_item = None
+            self.sort_state = None  # 切換回自訂模式
+            self._update_heading_labels()
             self._on_tree_select(event)
 
     def _on_menu_move(self, direction: str):
-        """右鍵選單調整順序」"""
+        """右鍵選單調整順序 (自動切換回自訂模式)」"""
         code = self._get_selected_code()
         if code:
+            self.sort_state = None
+            self._update_heading_labels()
             success = self.engine.move_rule(code, direction)
             if success:
                 self._reload_all_rules_in_ui()
@@ -739,16 +755,49 @@ class MainGUI(tk.Tk):
                 self.engine.remove_rule(code)
                 self.lbl_status_msg.config(text=f"已刪除 [{code}] 觸價設定。")
 
-    def _sort_tree(self, col):
-        """點擊標頭排序 (僅保留 代號 與 監控狀態 排序)」"""
+    def _cycle_sort_column(self, col: str):
+        """
+        三階段標頭排序循環 (Plan A):
+        階段 1: 升冪 (ASC ⬆)
+        階段 2: 降冪 (DESC ⬇)
+        階段 3: 恢復手動自訂順序 (NONE ↺)
+        """
         if col not in ["code", "status"]:
             return
 
-        items = [(self.tree.set(k, col), k) for k in self.tree.get_children('')]
-        items.sort()
-        ordered_codes = [k for _, k in items]
-        self.engine.reorder_by_codes(ordered_codes)
+        if self.sort_state == (col, "ASC"):
+            self.sort_state = (col, "DESC")
+        elif self.sort_state == (col, "DESC"):
+            self.sort_state = None  # 回覆自訂
+        else:
+            self.sort_state = (col, "ASC")
+
+        self._update_heading_labels()
         self._reload_all_rules_in_ui()
+
+    def _reset_sort_to_custom(self):
+        """手動一鍵恢復為原本拖曳/排序好的自訂順序"""
+        self.sort_state = None
+        self._update_heading_labels()
+        self._reload_all_rules_in_ui()
+        self.lbl_status_msg.config(text="已恢復為手動自訂排序順序。")
+
+    def _update_heading_labels(self):
+        """依據當前臨時檢視狀態動態更新欄位標頭文字提示"""
+        code_text = "代號 ⇅"
+        status_text = "監控狀態 ⇅"
+
+        if self.sort_state == ("code", "ASC"):
+            code_text = "代號 ⬆ (點擊切換降冪)"
+        elif self.sort_state == ("code", "DESC"):
+            code_text = "代號 ⬇ (點擊恢復自訂)"
+        elif self.sort_state == ("status", "ASC"):
+            status_text = "監控狀態 ⬆ (點擊切換降冪)"
+        elif self.sort_state == ("status", "DESC"):
+            status_text = "監控狀態 ⬇ (點擊恢復自訂)"
+
+        self.tree.heading("code", text=code_text)
+        self.tree.heading("status", text=status_text)
 
     def on_closing(self):
         """完全關閉應用程式與清除執行緒」"""
