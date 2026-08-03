@@ -28,26 +28,30 @@ except ImportError:
 
 
 class Notifier:
-    def __init__(self, telegram_token: str = "", telegram_chat_id: str = ""):
+    def __init__(self, telegram_token: str = "", telegram_chat_id: str = "", telegram_enabled: bool = True):
         self.telegram_token = telegram_token
         self.telegram_chat_id = telegram_chat_id
+        self.telegram_enabled = telegram_enabled
         self.logs: List[Dict[str, Any]] = []
         self.log_callbacks: List[Callable[[Dict[str, Any], bool], None]] = []
 
-    def set_telegram_config(self, token: str, chat_id: str, save_to_env: bool = False):
-        """更新 Telegram Bot 設定，選擇性自動存入 .env"""
+    def set_telegram_config(self, token: str, chat_id: str, enabled: Optional[bool] = None, save_to_env: bool = False):
+        """更新 Telegram Bot 設定與開關，選擇性自動存入 .env"""
         self.telegram_token = token.strip()
         self.telegram_chat_id = chat_id.strip()
+        if enabled is not None:
+            self.telegram_enabled = enabled
         if save_to_env:
-            self.save_telegram_config_to_env(self.telegram_token, self.telegram_chat_id)
+            self.save_telegram_config_to_env(self.telegram_token, self.telegram_chat_id, self.telegram_enabled)
 
-    def save_telegram_config_to_env(self, token: str, chat_id: str, env_path: str = ".env"):
-        """將 Telegram 設定自動寫入至環境變數 .env 檔案"""
+    def save_telegram_config_to_env(self, token: str, chat_id: str, enabled: bool = True, env_path: str = ".env"):
+        """將 Telegram 設定與啟用狀態自動寫入至環境變數 .env 檔案"""
         try:
             token = token.strip()
             chat_id = chat_id.strip()
             os.environ["TELEGRAM_BOT_TOKEN"] = token
             os.environ["TELEGRAM_CHAT_ID"] = chat_id
+            os.environ["TELEGRAM_ENABLED"] = "True" if enabled else "False"
 
             lines = []
             if os.path.exists(env_path):
@@ -56,6 +60,7 @@ class Notifier:
 
             has_token = False
             has_chat = False
+            has_enabled = False
             new_lines = []
 
             for line in lines:
@@ -65,6 +70,9 @@ class Notifier:
                 elif line.strip().startswith("TELEGRAM_CHAT_ID="):
                     new_lines.append(f"TELEGRAM_CHAT_ID={chat_id}\n")
                     has_chat = True
+                elif line.strip().startswith("TELEGRAM_ENABLED="):
+                    new_lines.append(f"TELEGRAM_ENABLED={'True' if enabled else 'False'}\n")
+                    has_enabled = True
                 else:
                     new_lines.append(line)
 
@@ -72,11 +80,13 @@ class Notifier:
                 new_lines.append(f"\nTELEGRAM_BOT_TOKEN={token}\n")
             if not has_chat:
                 new_lines.append(f"TELEGRAM_CHAT_ID={chat_id}\n")
+            if not has_enabled:
+                new_lines.append(f"TELEGRAM_ENABLED={'True' if enabled else 'False'}\n")
 
             with open(env_path, "w", encoding="utf-8") as f:
                 f.writelines(new_lines)
 
-            logger.info(f"已自動將 Telegram Bot 設定寫入 {env_path}")
+            logger.info(f"已自動將 Telegram Bot 設定與開關狀態寫入 {env_path}")
         except Exception as e:
             logger.error(f"寫入 .env 設定失敗: {e}")
 
@@ -102,7 +112,15 @@ class Notifier:
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_id = f"log_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
-        has_tg = bool(self.telegram_token and self.telegram_chat_id)
+        has_config = bool(self.telegram_token and self.telegram_chat_id)
+        will_send_tg = self.telegram_enabled and has_config
+
+        if not self.telegram_enabled:
+            tg_status = "DISABLED"
+        elif not has_config:
+            tg_status = "NOT_SET"
+        else:
+            tg_status = "SENDING"
 
         log_entry = {
             "id": log_id,
@@ -111,7 +129,7 @@ class Notifier:
             "message": message,
             "stock_code": stock_code,
             "trigger_type": trigger_type,
-            "telegram_status": "SENDING" if has_tg else "NOT_SET",
+            "telegram_status": tg_status,
             "telegram_sent": False
         }
 
@@ -123,8 +141,8 @@ class Notifier:
         threading.Thread(target=self._play_sound, daemon=True).start()
         threading.Thread(target=self._show_toast, args=(title, message), daemon=True).start()
 
-        # 3. 異步發送 Telegram 訊息
-        if has_tg:
+        # 3. 異步發送 Telegram 訊息 (當開關開啟且設定存在時)
+        if will_send_tg:
             threading.Thread(target=self._send_telegram, args=(log_entry, title, message), daemon=True).start()
 
     def _play_sound(self):

@@ -34,7 +34,8 @@ class MainGUI(tk.Tk):
         # Telegram 初步設定載入
         tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
         tg_chat = os.getenv("TELEGRAM_CHAT_ID", "")
-        self.notifier.set_telegram_config(tg_token, tg_chat)
+        tg_enabled_env = os.getenv("TELEGRAM_ENABLED", "True").strip().lower() != "false"
+        self.notifier.set_telegram_config(tg_token, tg_chat, enabled=tg_enabled_env)
 
         # 佇列機制 (確保 Thread-Safe 更新 UI)
         self.gui_queue = queue.Queue()
@@ -118,6 +119,22 @@ class MainGUI(tk.Tk):
 
         self.lbl_tg_status = tk.Label(right_panel, text="⚪ Telegram: 未設定", bg="#555555", fg="#FFFFFF", font=("Microsoft JhengHei", 9, "bold"), padx=8, pady=3)
         self.lbl_tg_status.pack(side=tk.LEFT, padx=5)
+
+        # Telegram 推播可選開關
+        self.var_tg_enable = tk.BooleanVar(value=self.notifier.telegram_enabled)
+        self.chk_tg = tk.Checkbutton(
+            right_panel,
+            text="📱 啟用 Telegram",
+            variable=self.var_tg_enable,
+            command=self._on_toggle_tg_enable,
+            bg="#2A3F54",
+            fg="#FFFFFF",
+            selectcolor="#2A3F54",
+            activebackground="#2A3F54",
+            activeforeground="#FFFFFF",
+            font=("Microsoft JhengHei", 9, "bold")
+        )
+        self.chk_tg.pack(side=tk.LEFT, padx=5)
 
         # 控制按鈕
         btn_login = ttk.Button(right_panel, text="🔑 登入 API", command=self._on_click_login)
@@ -406,6 +423,8 @@ class MainGUI(tk.Tk):
             tg_text = "⏳ 發送中..."
         elif status == "FAILED":
             tg_text = "❌ 發送失敗"
+        elif status == "DISABLED":
+            tg_text = "⏸️ 已關閉"
         else:
             tg_text = "➖ 未設定"
 
@@ -458,10 +477,25 @@ class MainGUI(tk.Tk):
         else:
             self.lbl_api_status.config(text="⚪ Shioaji: 離線", bg="#555555", fg="#FFFFFF")
 
-        if self.notifier.telegram_token and self.notifier.telegram_chat_id:
-            self.lbl_tg_status.config(text="🟢 Telegram: 已設定", bg="#28A745")
+        if not self.notifier.telegram_enabled:
+            self.lbl_tg_status.config(text="⏸️ Telegram: 已關閉", bg="#555555", fg="#FFFFFF")
+        elif self.notifier.telegram_token and self.notifier.telegram_chat_id:
+            self.lbl_tg_status.config(text="🟢 Telegram: 已啟用", bg="#28A745", fg="#FFFFFF")
         else:
             self.lbl_tg_status.config(text="⚪ Telegram: 未設定", bg="#555555", fg="#FFFFFF")
+
+    def _on_toggle_tg_enable(self):
+        """切換 Telegram 推播開關」"""
+        enabled = self.var_tg_enable.get()
+        self.notifier.set_telegram_config(
+            self.notifier.telegram_token,
+            self.notifier.telegram_chat_id,
+            enabled=enabled,
+            save_to_env=True
+        )
+        self._update_connection_status_ui()
+        status_str = "已啟用" if enabled else "已關閉"
+        self.lbl_status_msg.config(text=f"Telegram 推播已切換為：【{status_str}】(已自動同步寫入 .env)。")
 
     # --- 使用者互動與動作處理 ---
 
