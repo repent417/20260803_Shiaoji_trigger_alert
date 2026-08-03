@@ -624,8 +624,21 @@ class MainGUI(tk.Tk):
         self._hover_item = None
 
     def _on_tree_double_click(self, event):
-        """雙擊 Treeview 列：填入表單」"""
-        self._on_menu_edit()
+        """雙擊表格列：快速切換 監控中 / 已暫停 狀態 (若已觸發則重置為監控中)"""
+        code = self.tree.identify_row(event.y)
+        if not code:
+            code = self._get_selected_code()
+
+        if code and code in self.engine.rules:
+            rule = self.engine.rules[code]
+            if rule.status == STATUS_TRIGGERED:
+                self.engine.reset_trigger(code)
+                self.lbl_status_msg.config(text=f"已重置 [{code}] 狀態為【▶ 監控中】。")
+            else:
+                self.engine.toggle_pause(code)
+                new_status = self.engine.rules[code].status
+                status_name = "【⏸️ 已暫停】" if new_status == STATUS_PAUSED else "【▶ 監控中】"
+                self.lbl_status_msg.config(text=f"已切換 [{code}] 狀態為 {status_name}。")
 
     def _on_tree_right_click(self, event):
         """右鍵彈出選單」"""
