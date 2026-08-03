@@ -44,6 +44,7 @@ class MainGUI(tk.Tk):
         self._hover_item = None
         self._drag_item = None
         self.sort_state = None  # None (手動自訂) | ("code", "ASC") | ("code", "DESC") | ("status", "ASC") | ("status", "DESC")
+        self._cell_labels: Dict[str, tk.Label] = {}  # 專屬於「漲跌幅」單欄的文字標籤字典
 
         # 註冊 Engine 與 Notifier 的異動廣播
         self.engine.add_update_callback(self._on_rule_updated)
@@ -203,9 +204,12 @@ class MainGUI(tk.Tk):
         self.tree.column("note", width=200, anchor=tk.W)
 
         # 捲軸
-        vsb = ttk.Scrollbar(card, orient="vertical", command=self.tree.yview)
-        hsb = ttk.Scrollbar(card, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        vsb = ttk.Scrollbar(card, orient="vertical", command=self._on_tree_yscroll)
+        hsb = ttk.Scrollbar(card, orient="horizontal", command=self._on_tree_xscroll)
+        self.tree.configure(
+            yscrollcommand=lambda *args: (vsb.set(*args), self._update_all_cell_overlays()),
+            xscrollcommand=lambda *args: (hsb.set(*args), self._update_all_cell_overlays())
+        )
 
         self.tree.grid(row=0, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
         vsb.grid(row=0, column=1, sticky=tk.N+tk.S)
@@ -230,6 +234,7 @@ class MainGUI(tk.Tk):
         self.tree.bind("<ButtonPress-1>", self._on_drag_start)
         self.tree.bind("<B1-Motion>", self._on_drag_motion)
         self.tree.bind("<ButtonRelease-1>", self._on_drag_release)
+        self.tree.bind("<Configure>", lambda e: self._update_all_cell_overlays())
 
     def _build_log_frame(self):
         """觸發通知歷史日誌區塊"""
@@ -319,6 +324,8 @@ class MainGUI(tk.Tk):
                 elif msg_type == "RULE_UPDATED":
                     rule, is_deleted = data
                     if is_deleted or rule.code not in self.engine.rules:
+                        if rule.code in self._cell_labels:
+                            self._cell_labels.pop(rule.code).destroy()
                         if self.tree.exists(rule.code):
                             self.tree.delete(rule.code)
                     else:
@@ -375,7 +382,7 @@ class MainGUI(tk.Tk):
             rule.code,
             rule.name,
             last_p_str,
-            change_str,
+            "",  # 留空，由專屬 Label 覆蓋呈現獨立前景色 (避免影響其他欄位)
             upper_str,
             lower_str,
             status_display,
@@ -387,6 +394,8 @@ class MainGUI(tk.Tk):
             self.tree.item(item_id, values=values, tags=(tag,))
         else:
             self.tree.insert("", tk.END, iid=item_id, values=values, tags=(tag,))
+
+        self._update_cell_overlay(item_id)
 
     def _add_log_to_treeview(self, log_entry: Dict[str, Any]):
         """新增即時 Log 至下方紀錄表"""
@@ -402,6 +411,11 @@ class MainGUI(tk.Tk):
 
     def _reload_all_rules_in_ui(self):
         """刷新 Treeview 顯示所有已儲存規則 (若有臨時排序，僅影響當前顯示，不覆蓋 order_index)"""
+        # 清除所有 cell labels
+        for lbl in list(self._cell_labels.values()):
+            lbl.destroy()
+        self._cell_labels.clear()
+
         for item in self.tree.get_children():
             self.tree.delete(item)
 
@@ -418,6 +432,8 @@ class MainGUI(tk.Tk):
             self._update_rule_in_treeview(rule)
             # 自動訂閱
             self.client.subscribe(rule.code)
+
+        self._update_all_cell_overlays()
 
     def _update_connection_status_ui(self):
         """更新頂部 API 與 Telegram 狀態燈標籤"""
@@ -798,6 +814,97 @@ class MainGUI(tk.Tk):
 
         self.tree.heading("code", text=code_text)
         self.tree.heading("status", text=status_text)
+
+    def _on_tree_yscroll(self, *args):
+        self.tree.yview(*args)
+        self._update_all_cell_overlays()
+
+    def _on_tree_xscroll(self, *args):
+        self.tree.xview(*args)
+        self._update_all_cell_overlays()
+
+    def _update_cell_overlay(self, item_id: str):
+        """更新「漲跌 (幅%)」單一欄位的獨立文字色彩標籤 (不影響其他欄位純黑文字)"""
+        if not self.tree.exists(item_id):
+            if item_id in self._cell_labels:
+                self._cell_labels.pop(item_id).destroy()
+            return
+
+        rule = self.engine.rules.get(item_id)
+        if not rule:
+            return
+
+        # 確定前景色
+        if rule.change > 0:
+            fg_color = "#CC0000"  # 上漲純紅字
+            change_str = f"▲ +{rule.change:.2f} (+{rule.change_rate:.2f}%)"
+        elif rule.change < 0:
+            fg_color = "#008000"  # 下跌純綠字
+            change_str = f"▼ {rule.change:.2f} ({rule.change_rate:.2f}%)"
+        else:
+            fg_color = "#000000"  # 平盤純黑字
+            change_str = "0.00 (0.00%)"
+
+        # 確定背景色 (依據項目狀態)
+        bg_color = "#FFFFFF"
+        if rule.status == STATUS_PAUSED:
+            bg_color = "#F0F0F0"
+        elif rule.status == STATUS_TRIGGERED:
+            bg_color = "#FFE6E6" if rule.triggered_type == "UPPER" else "#E6FFE6"
+
+        if item_id == self._hover_item:
+            bg_color = "#EBF5FB"
+
+        self.update_idletasks()
+        bbox = self.tree.bbox(item_id, "change")
+        if not bbox or len(bbox) < 4 or bbox[2] <= 0:
+            if item_id in self._cell_labels:
+                self._cell_labels[item_id].place_forget()
+            return
+
+        x, y, w, h = bbox
+
+        if item_id not in self._cell_labels:
+            lbl = tk.Label(self.tree, anchor=tk.E, padx=6)
+            # 事件綁定：點擊覆蓋 Label 時轉發至 Treeview
+            lbl.bind("<Double-1>", lambda e, code=item_id: self._on_cell_double_click(e, code))
+            lbl.bind("<Button-3>", lambda e, code=item_id: self._on_cell_right_click(e, code))
+            lbl.bind("<ButtonPress-1>", lambda e, code=item_id: self._on_cell_click(e, code))
+            lbl.bind("<B1-Motion>", self._on_drag_motion)
+            lbl.bind("<ButtonRelease-1>", self._on_drag_release)
+            lbl.bind("<Motion>", lambda e, code=item_id: self._on_cell_motion(e, code))
+            lbl.bind("<Leave>", self._on_tree_leave)
+            self._cell_labels[item_id] = lbl
+        else:
+            lbl = self._cell_labels[item_id]
+
+        lbl.config(text=change_str, fg=fg_color, bg=bg_color, font=("Microsoft JhengHei", 9, "bold"))
+        lbl.place(x=x, y=y, width=w, height=h)
+
+    def _update_all_cell_overlays(self):
+        """重新調整所有漲跌幅欄位標籤的位置與色彩」"""
+        for item_id in list(self.engine.rules.keys()):
+            self._update_cell_overlay(item_id)
+
+    def _on_cell_click(self, event, code: str):
+        if self.tree.exists(code):
+            self.tree.selection_set(code)
+            self._on_tree_select(event)
+            self._on_drag_start(event)
+
+    def _on_cell_double_click(self, event, code: str):
+        if self.tree.exists(code):
+            self.tree.selection_set(code)
+            self._on_tree_double_click(event)
+
+    def _on_cell_right_click(self, event, code: str):
+        if self.tree.exists(code):
+            self.tree.selection_set(code)
+            self.context_menu.post(event.x_root, event.y_root)
+
+    def _on_cell_motion(self, event, code: str):
+        fake_event = type("Event", (), {"y": self.tree.bbox(code, "change")[1] if self.tree.exists(code) and self.tree.bbox(code, "change") else 0})()
+        self._on_tree_motion(fake_event)
 
     def on_closing(self):
         """完全關閉應用程式與清除執行緒」"""
