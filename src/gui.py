@@ -574,6 +574,39 @@ class MainGUI(tk.Tk):
         self._clear_form()
         self.lbl_status_msg.config(text=f"已成功設定 [{code} {rule.name}] 的觸價條件！")
 
+        # 欄位閃爍高亮動畫效果 (如同滑鼠點擊)
+        self._flash_item_in_treeview(code)
+
+    def _flash_item_in_treeview(self, item_id: str):
+        """
+        儲存或更新觸價單時，讓該列閃爍高亮 (模擬滑鼠點擊視覺效果)
+        """
+        if not self.tree.exists(item_id):
+            return
+
+        # 滾動定位並高亮選取
+        self.tree.see(item_id)
+        self.tree.selection_set(item_id)
+        self._update_all_cell_overlays()
+
+        if self._selection_timer:
+            self.after_cancel(self._selection_timer)
+            self._selection_timer = None
+
+        def step2():
+            if self.tree.exists(item_id):
+                self.tree.selection_remove(item_id)
+                self._update_all_cell_overlays()
+
+        def step3():
+            if self.tree.exists(item_id):
+                self.tree.selection_set(item_id)
+                self._update_all_cell_overlays()
+                self._selection_timer = self.after(2000, self._auto_deselect_tree)
+
+        self.after(200, step2)
+        self.after(400, step3)
+
     def _clear_form(self):
         """清空輸入欄位"""
         self.ent_code.delete(0, tk.END)
