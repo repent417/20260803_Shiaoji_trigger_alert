@@ -129,9 +129,12 @@ class Notifier:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_id = f"log_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
         has_config = bool(self.telegram_token and self.telegram_chat_id)
-        will_send_tg = self.telegram_enabled and has_config
+        is_system_event = (trigger_type == "SYSTEM")
+        will_send_tg = self.telegram_enabled and has_config and not is_system_event
 
-        if not self.telegram_enabled:
+        if is_system_event:
+            tg_status = "SYSTEM_ONLY"
+        elif not self.telegram_enabled:
             tg_status = "DISABLED"
         elif not has_config:
             tg_status = "NOT_SET"

@@ -385,7 +385,7 @@ class MainGUI(tk.Tk):
                                 title="網路連線中斷",
                                 message="系統偵測到網路連線已中斷，觸價通知暫時失效！請恢復網路連線後點擊重連。",
                                 stock_code="SYS",
-                                trigger_type="TEST"
+                                trigger_type="SYSTEM"
                             )
                     else:
                         self.lbl_status_msg.config(text="✅ 網路連線已恢復，請點擊右上方 [🔄 點擊重連] 重新登入 API。")
@@ -464,6 +464,8 @@ class MainGUI(tk.Tk):
             tg_text = "❌ 發送失敗"
         elif status == "DISABLED":
             tg_text = "⏸️ 已關閉"
+        elif status == "SYSTEM_ONLY":
+            tg_text = "➖ 系統內部"
         else:
             tg_text = "➖ 未設定"
 
@@ -678,7 +680,7 @@ class MainGUI(tk.Tk):
                 title="網路連線恢復",
                 message="Shioaji API 重新登入成功，即時行情觸價監控已全面恢復！",
                 stock_code="SYS",
-                trigger_type="TEST"
+                trigger_type="SYSTEM"
             )
         else:
             messagebox.showerror("登入失敗", "Shioaji API 登入失敗！請確認 .env 設定與 API KEY。")
