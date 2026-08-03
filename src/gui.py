@@ -42,6 +42,7 @@ class MainGUI(tk.Tk):
         # 互動狀態
         self._selection_timer = None
         self._hover_item = None
+        self._drag_item = None
 
         # 註冊 Engine 與 Notifier 的異動廣播
         self.engine.add_update_callback(self._on_rule_updated)
@@ -180,13 +181,13 @@ class MainGUI(tk.Tk):
         columns = ("code", "name", "last_price", "change", "upper_bound", "lower_bound", "status", "triggered_at", "note")
         self.tree = ttk.Treeview(card, columns=columns, show="headings", selectmode="browse")
 
-        self.tree.heading("code", text="代號", command=lambda: self._sort_tree("code"))
-        self.tree.heading("name", text="股票名稱", command=lambda: self._sort_tree("name"))
+        self.tree.heading("code", text="代號 ⇅", command=lambda: self._sort_tree("code"))
+        self.tree.heading("name", text="股票名稱")
         self.tree.heading("last_price", text="即時成交價")
         self.tree.heading("change", text="漲跌 (幅%)")
         self.tree.heading("upper_bound", text="⬆️ 突破上界")
         self.tree.heading("lower_bound", text="⬇️ 跌破下界")
-        self.tree.heading("status", text="監控狀態")
+        self.tree.heading("status", text="監控狀態 ⇅", command=lambda: self._sort_tree("status"))
         self.tree.heading("triggered_at", text="最後觸發時間")
         self.tree.heading("note", text="備註")
 
@@ -225,6 +226,9 @@ class MainGUI(tk.Tk):
         self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
         self.tree.bind("<Motion>", self._on_tree_motion)
         self.tree.bind("<Leave>", self._on_tree_leave)
+        self.tree.bind("<ButtonPress-1>", self._on_drag_start)
+        self.tree.bind("<B1-Motion>", self._on_drag_motion)
+        self.tree.bind("<ButtonRelease-1>", self._on_drag_release)
 
     def _build_log_frame(self):
         """觸發通知歷史日誌區塊"""
@@ -276,6 +280,11 @@ class MainGUI(tk.Tk):
         self.context_menu.add_command(label="✏️ 載入至編輯區", command=self._on_menu_edit)
         self.context_menu.add_command(label="🔄 重置為監控中 (Reset)", command=self._on_menu_reset)
         self.context_menu.add_command(label="⏸️ 切換 啟用/暫停 (Pause)", command=self._on_menu_toggle_pause)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="⬆️ 向上移動", command=lambda: self._on_menu_move("UP"))
+        self.context_menu.add_command(label="⬇️ 向下移動", command=lambda: self._on_menu_move("DOWN"))
+        self.context_menu.add_command(label="🔝 移至最頂部", command=lambda: self._on_menu_move("TOP"))
+        self.context_menu.add_command(label="🔚 移至最底部", command=lambda: self._on_menu_move("BOTTOM"))
         self.context_menu.add_separator()
         self.context_menu.add_command(label="⚡ 手動模擬價格突破測試", command=self._on_menu_mock_upper)
         self.context_menu.add_command(label="⚡ 手動模擬價格跌破測試", command=self._on_menu_mock_lower)
@@ -659,6 +668,37 @@ class MainGUI(tk.Tk):
         if code:
             self.engine.toggle_pause(code)
 
+    def _on_drag_start(self, event):
+        """開始拖曳」"""
+        item = self.tree.identify_row(event.y)
+        if item:
+            self._drag_item = item
+
+    def _on_drag_motion(self, event):
+        """拖曳過程中視覺移動列」"""
+        if self._drag_item:
+            target = self.tree.identify_row(event.y)
+            if target and target != self._drag_item:
+                target_idx = self.tree.index(target)
+                self.tree.move(self._drag_item, "", target_idx)
+
+    def _on_drag_release(self, event):
+        """放開拖曳時，將 Treeview 順序儲存至 TriggerEngine」"""
+        if self._drag_item:
+            current_codes = list(self.tree.get_children())
+            self.engine.reorder_by_codes(current_codes)
+            self._drag_item = None
+            self._on_tree_select(event)
+
+    def _on_menu_move(self, direction: str):
+        """右鍵選單調整順序」"""
+        code = self._get_selected_code()
+        if code:
+            success = self.engine.move_rule(code, direction)
+            if success:
+                self._reload_all_rules_in_ui()
+                self.tree.selection_set(code)
+
     def _on_menu_mock_upper(self):
         """手動注入突破價」"""
         code = self._get_selected_code()
@@ -687,11 +727,15 @@ class MainGUI(tk.Tk):
                 self.lbl_status_msg.config(text=f"已刪除 [{code}] 觸價設定。")
 
     def _sort_tree(self, col):
-        """欄位排序」"""
+        """點擊標頭排序 (僅保留 代號 與 監控狀態 排序)」"""
+        if col not in ["code", "status"]:
+            return
+
         items = [(self.tree.set(k, col), k) for k in self.tree.get_children('')]
         items.sort()
-        for index, (val, k) in enumerate(items):
-            self.tree.move(k, '', index)
+        ordered_codes = [k for _, k in items]
+        self.engine.reorder_by_codes(ordered_codes)
+        self._reload_all_rules_in_ui()
 
     def on_closing(self):
         """完全關閉應用程式與清除執行緒」"""

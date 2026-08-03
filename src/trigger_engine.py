@@ -28,7 +28,8 @@ class TriggerRule:
         triggered_type: Optional[str] = None,
         triggered_price: Optional[float] = None,
         triggered_at: Optional[str] = None,
-        note: str = ""
+        note: str = "",
+        order_index: int = 0
     ):
         self.code = code.strip()
         self.name = name.strip() or code
@@ -42,6 +43,7 @@ class TriggerRule:
         self.triggered_price = float(triggered_price) if triggered_price is not None else None
         self.triggered_at = triggered_at
         self.note = note
+        self.order_index = int(order_index)
 
     def to_dict(self) -> Dict[str, Any]:
         """序列化為字典用於儲存"""
@@ -57,7 +59,8 @@ class TriggerRule:
             "triggered_type": self.triggered_type,
             "triggered_price": self.triggered_price,
             "triggered_at": self.triggered_at,
-            "note": self.note
+            "note": self.note,
+            "order_index": self.order_index
         }
 
     @classmethod
@@ -75,7 +78,8 @@ class TriggerRule:
             triggered_type=data.get("triggered_type"),
             triggered_price=data.get("triggered_price"),
             triggered_at=data.get("triggered_at"),
-            note=data.get("note", "")
+            note=data.get("note", ""),
+            order_index=data.get("order_index", 0)
         )
 
 
@@ -104,18 +108,22 @@ class TriggerEngine:
                 logger.error(f"Engine update callback 異常: {e}")
 
     def load_from_storage(self):
-        """從本地 JSON 載入觸價規則"""
+        """從本地 JSON 載入觸價規則，並依 order_index 排序"""
         raw_list = self.storage.load_rules()
         self.rules.clear()
-        for item in raw_list:
+        # 依 order_index 排序
+        raw_list.sort(key=lambda x: x.get("order_index", 0))
+        for idx, item in enumerate(raw_list):
+            item["order_index"] = idx
             rule = TriggerRule.from_dict(item)
             if rule.code:
                 self.rules[rule.code] = rule
         logger.info(f"TriggerEngine 已載入 {len(self.rules)} 條規則")
 
     def save_to_storage(self):
-        """儲存現有觸價規則至本地 JSON"""
-        raw_list = [rule.to_dict() for rule in self.rules.values()]
+        """儲存現有觸價規則至本地 JSON」"""
+        ordered_rules = sorted(self.rules.values(), key=lambda r: r.order_index)
+        raw_list = [rule.to_dict() for rule in ordered_rules]
         self.storage.save_rules(raw_list)
 
     def add_or_update_rule(
@@ -147,13 +155,61 @@ class TriggerEngine:
                 upper_bound=upper_bound,
                 lower_bound=lower_bound,
                 status=STATUS_ACTIVE,
-                note=note
+                note=note,
+                order_index=len(self.rules)
             )
             self.rules[code] = rule
 
         self.save_to_storage()
         self._notify_callbacks(rule, is_deleted=False)
         return rule
+
+    def reorder_by_codes(self, ordered_codes: List[str]):
+        """依傳入的股票代號順序重排所有規則」"""
+        new_dict = {}
+        for idx, code in enumerate(ordered_codes):
+            code = code.strip().upper()
+            if code in self.rules:
+                rule = self.rules[code]
+                rule.order_index = idx
+                new_dict[code] = rule
+
+        # 補上未在傳入清單中的規則
+        for code, rule in self.rules.items():
+            if code not in new_dict:
+                rule.order_index = len(new_dict)
+                new_dict[code] = rule
+
+        self.rules = new_dict
+        self.save_to_storage()
+
+    def move_rule(self, code: str, direction: str) -> bool:
+        """
+        手動調整單一項目順序
+        :param direction: 'UP' | 'DOWN' | 'TOP' | 'BOTTOM'
+        """
+        code = code.strip().upper()
+        if code not in self.rules:
+            return False
+
+        ordered_codes = [r.code for r in sorted(self.rules.values(), key=lambda r: r.order_index)]
+        idx = ordered_codes.index(code)
+
+        if direction == "UP" and idx > 0:
+            ordered_codes[idx], ordered_codes[idx - 1] = ordered_codes[idx - 1], ordered_codes[idx]
+        elif direction == "DOWN" and idx < len(ordered_codes) - 1:
+            ordered_codes[idx], ordered_codes[idx + 1] = ordered_codes[idx + 1], ordered_codes[idx]
+        elif direction == "TOP" and idx > 0:
+            item = ordered_codes.pop(idx)
+            ordered_codes.insert(0, item)
+        elif direction == "BOTTOM" and idx < len(ordered_codes) - 1:
+            item = ordered_codes.pop(idx)
+            ordered_codes.append(item)
+        else:
+            return False
+
+        self.reorder_by_codes(ordered_codes)
+        return True
 
     def remove_rule(self, code: str) -> bool:
         """刪除指定股票觸價單"""
