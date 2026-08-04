@@ -338,13 +338,22 @@ class MainGUI(tk.Tk):
         self.gui_queue.put(("LOG_UPDATED" if is_update else "LOG_ADDED", log_entry))
 
     def _start_network_monitor(self):
-        """背景網路連線監控服務 Thread"""
+        """背景網路連線監控與自動重連服務 Thread"""
         def monitor_loop():
+            reconnecting = False
             while not self._is_closing:
                 connected = is_internet_available()
                 if connected != self.is_network_connected:
                     self.is_network_connected = connected
                     self.gui_queue.put(("NETWORK_STATUS_CHANGED", connected))
+                
+                # 若網路連線恢復，且先前曾發出斷線警示或處於重連狀態，則自動觸發 API 重連
+                if connected and (self.network_warned or reconnecting):
+                    reconnecting = False
+                    self.gui_queue.put(("AUTO_RECONNECT", None))
+                elif not connected:
+                    reconnecting = True
+
                 time.sleep(3.0)
 
         t = threading.Thread(target=monitor_loop, daemon=True)
@@ -378,19 +387,47 @@ class MainGUI(tk.Tk):
                     is_connected = data
                     if not is_connected:
                         self.lbl_api_status.config(text="🔴 網路中斷", bg="#DC3545", fg="#FFFFFF")
-                        self.btn_login.config(text="🔄 點擊重連", style="Warning.TButton")
-                        self.lbl_status_msg.config(text="⚠️ 偵測到網路連線中斷！請檢查網路連線後，點擊右上方 [🔄 點擊重連]。")
+                        self.btn_login.config(text="⏳ 自動重連中...", style="Warning.TButton")
+                        self.lbl_status_msg.config(text="⚠️ 偵測到網路連線中斷！系統正在背景持續嘗試自動重連中...")
                         if not self.network_warned:
                             self.network_warned = True
                             self.notifier.notify(
                                 title="網路連線中斷",
-                                message="系統偵測到網路連線已中斷，觸價通知暫時失效！請恢復網路連線後點擊重連。",
+                                message="系統偵測到網路中斷，已啟動背景自動重連機制（不發送 Telegram 推播）。",
                                 stock_code="SYS",
                                 trigger_type="SYSTEM"
                             )
                     else:
-                        self.lbl_status_msg.config(text="✅ 網路連線已恢復，請點擊右上方 [🔄 點擊重連] 重新登入 API。")
-                        self.btn_login.config(text="🔄 點擊重連", style="Warning.TButton")
+                        self.lbl_status_msg.config(text="✅ 網路連線已恢復，系統正在自動重新登入 API 並恢復行情監控...")
+                        self.btn_login.config(text="⏳ 自動重連中...", style="Warning.TButton")
+
+                elif msg_type == "AUTO_RECONNECT":
+                    # 自動執行背景重新登入 API 與行情訂閱
+                    def do_reconnect():
+                        success = self.client.login()
+                        if success:
+                            for code in self.engine.rules.keys():
+                                self.client.subscribe(code)
+                            self.gui_queue.put(("AUTO_RECONNECT_SUCCESS", None))
+                        else:
+                            self.gui_queue.put(("AUTO_RECONNECT_FAILED", None))
+
+                    threading.Thread(target=do_reconnect, daemon=True).start()
+
+                elif msg_type == "AUTO_RECONNECT_SUCCESS":
+                    self.network_warned = False
+                    self.lbl_status_msg.config(text="✅ 網路已連線！API 自動登入成功並已恢復即時行情監控。")
+                    self.notifier.notify(
+                        title="網路連線恢復",
+                        message="Shioaji API 自動重新登入成功，即時行情觸價監控已全面自動恢復！",
+                        stock_code="SYS",
+                        trigger_type="SYSTEM"
+                    )
+                    self._update_connection_status_ui()
+
+                elif msg_type == "AUTO_RECONNECT_FAILED":
+                    self.lbl_status_msg.config(text="⚠️ 自動重連登入失敗，將於幾秒後自動重試，亦可點擊右上方手動重連。")
+                    self.btn_login.config(text="🔄 點擊重連", style="Warning.TButton")
 
         except Exception as e:
             logger.error(f"GUI 佇列處理異常: {e}")
