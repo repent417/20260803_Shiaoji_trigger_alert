@@ -41,12 +41,12 @@ class TestTriggerEngine(unittest.TestCase):
             lower_bound=820.0
         )
         # 價格小於 880，未觸發
-        self.engine.process_tick("2330", 870.0, change=10.0, change_rate=1.16)
+        self.engine.process_tick("2330", 870.0, change=10.0, change_rate=1.16, bypass_time_check=True)
         rule = self.engine.rules["2330"]
         self.assertEqual(rule.status, STATUS_ACTIVE)
 
         # 價格達到 885，觸發突破上界
-        self.engine.process_tick("2330", 885.0, change=25.0, change_rate=2.9)
+        self.engine.process_tick("2330", 885.0, change=25.0, change_rate=2.9, bypass_time_check=True)
         self.assertEqual(rule.status, STATUS_TRIGGERED)
         self.assertEqual(rule.triggered_type, "UPPER")
         self.assertEqual(rule.triggered_price, 885.0)
@@ -59,19 +59,19 @@ class TestTriggerEngine(unittest.TestCase):
             lower_bound=190.0
         )
         # 價格高於 190，未觸發
-        self.engine.process_tick("2317", 195.0, change=-2.0, change_rate=-1.0)
+        self.engine.process_tick("2317", 195.0, change=-2.0, change_rate=-1.0, bypass_time_check=True)
         rule = self.engine.rules["2317"]
         self.assertEqual(rule.status, STATUS_ACTIVE)
 
         # 價格跌至 188，觸發跌破下界
-        self.engine.process_tick("2317", 188.0, change=-9.0, change_rate=-4.5)
+        self.engine.process_tick("2317", 188.0, change=-9.0, change_rate=-4.5, bypass_time_check=True)
         self.assertEqual(rule.status, STATUS_TRIGGERED)
         self.assertEqual(rule.triggered_type, "LOWER")
         self.assertEqual(rule.triggered_price, 188.0)
 
     def test_reset_and_pause(self):
         rule = self.engine.add_or_update_rule(code="0050", upper_bound=160.0)
-        self.engine.process_tick("0050", 165.0)
+        self.engine.process_tick("0050", 165.0, bypass_time_check=True)
         self.assertEqual(rule.status, STATUS_TRIGGERED)
 
         # 重置
@@ -84,8 +84,26 @@ class TestTriggerEngine(unittest.TestCase):
         self.assertEqual(rule.status, STATUS_PAUSED)
 
         # 暫停期間價格再超過上界，不應觸發
-        self.engine.process_tick("0050", 170.0)
+        self.engine.process_tick("0050", 170.0, bypass_time_check=True)
         self.assertEqual(rule.status, STATUS_PAUSED)
+
+    def test_trading_hours_filter(self):
+        from datetime import datetime
+        from src.trigger_engine import is_in_trading_hours
+        # 測試 08:40 現股試撮盤 (應回傳 False)
+        dt_trial = datetime(2026, 8, 4, 8, 40, 0)
+        self.assertFalse(is_in_trading_hours("2330", dt_trial))
+
+        # 測試 09:05 現股盤中正式交易時間 (應回傳 True)
+        dt_open = datetime(2026, 8, 4, 9, 5, 0)
+        self.assertTrue(is_in_trading_hours("2330", dt_open))
+
+        # 測試 08:40 期貨試撮盤 (應回傳 False)
+        self.assertFalse(is_in_trading_hours("TXF", dt_trial))
+
+        # 測試 08:50 期貨盤中正式交易時間 (應回傳 True)
+        dt_fut_open = datetime(2026, 8, 4, 8, 50, 0)
+        self.assertTrue(is_in_trading_hours("TXF", dt_fut_open))
 
     def test_remove_rule_notification(self):
         deleted_events = []

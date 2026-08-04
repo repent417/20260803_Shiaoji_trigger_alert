@@ -3,7 +3,7 @@ Trigger Engine Module
 提供觸價條件設定數據模型、即時價格比對、狀態切換與事件觸發機制。
 """
 import logging
-from datetime import datetime
+from datetime import datetime, time
 from typing import Dict, Any, List, Optional, Callable
 from src.storage import StorageManager
 from src.notifier import Notifier
@@ -13,6 +13,40 @@ logger = logging.getLogger(__name__)
 STATUS_ACTIVE = "Active"       # 監控中
 STATUS_TRIGGERED = "Triggered" # 已觸發
 STATUS_PAUSED = "Paused"       # 已暫停
+
+def is_futures_or_index(code: str) -> bool:
+    """判斷商品代號是否為期貨或指數 (如 TXF, MXF, TMF 等非純數字代碼)"""
+    c = code.strip().upper()
+    return not c.isdigit()
+
+def is_in_trading_hours(code: str, now_dt: Optional[datetime] = None, bypass_for_testing: bool = False) -> bool:
+    """
+    檢查當前時間是否屬於該商品的【正式開盤交易時間】
+    精準過濾 08:30-08:59 現股與 08:30-08:44 期貨之試撮盤
+    """
+    if bypass_for_testing:
+        return True
+    if now_dt is None:
+        now_dt = datetime.now()
+
+    weekday = now_dt.weekday()  # 0=Mon, 1=Tue, ..., 4=Fri, 5=Sat, 6=Sun
+    now_time = now_dt.time()
+
+    if is_futures_or_index(code):
+        # 【台指期 / 指數期貨】交易時間：
+        # 日盤：08:45:00 ~ 13:45:00 (過濾 08:30 ~ 08:44:59 試撮)
+        # 夜盤：15:00:00 ~ 翌日 05:00:00 (跨日)
+        if weekday < 5 and time(8, 45, 0) <= now_time <= time(13, 45, 0):
+            return True
+        if (weekday < 5 and now_time >= time(15, 0, 0)) or (0 < weekday < 6 and now_time <= time(5, 0, 0)):
+            return True
+        return False
+    else:
+        # 【現股 / 股票 / ETF】交易時間：
+        # 正式盤：09:00:00 ~ 13:30:00 (過濾 08:30 ~ 08:59:59 試撮)
+        if weekday < 5 and time(9, 0, 0) <= now_time <= time(13, 30, 0):
+            return True
+        return False
 
 class TriggerRule:
     def __init__(
@@ -245,13 +279,14 @@ class TriggerEngine:
             self.save_to_storage()
             self._notify_callbacks(rule)
 
-    def process_tick(self, code: str, price: float, change: float = 0.0, change_rate: float = 0.0):
+    def process_tick(self, code: str, price: float, change: float = 0.0, change_rate: float = 0.0, bypass_time_check: bool = False):
         """
         即時比對 Tick 價格
         :param code: 股票代號
         :param price: 當前成交價
         :param change: 漲跌金額
         :param change_rate: 漲跌幅 (%)
+        :param bypass_time_check: 是否過濾交易時間限制 (如測試模式或 Mock 時傳入 True)
         """
         code = code.strip().upper()
         target_code = code
@@ -270,8 +305,13 @@ class TriggerEngine:
         rule.change = float(change)
         rule.change_rate = float(change_rate)
 
-        # 僅在 ACTIVE 狀態進行觸價判斷
+        # 僅在 ACTIVE 狀態 且 處於【正式開盤交易時間】才進行觸價判斷
         if rule.status == STATUS_ACTIVE:
+            # 時間檢測 (過濾 08:30~08:59:59 試撮盤)
+            if not is_in_trading_hours(rule.code, bypass_for_testing=bypass_time_check):
+                self._notify_callbacks(rule)
+                return
+
             triggered = False
             t_type = None
             t_msg = ""
