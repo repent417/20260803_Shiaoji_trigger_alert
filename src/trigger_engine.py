@@ -63,8 +63,11 @@ class TriggerRule:
         triggered_price: Optional[float] = None,
         triggered_at: Optional[str] = None,
         note: str = "",
-        order_index: int = 0
+        order_index: int = 0,
+        created_at: Optional[str] = None,
+        updated_at: Optional[str] = None
     ):
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.code = code.strip()
         self.name = name.strip() or code
         self.upper_bound = float(upper_bound) if upper_bound is not None and upper_bound != "" else None
@@ -78,6 +81,8 @@ class TriggerRule:
         self.triggered_at = triggered_at
         self.note = note
         self.order_index = int(order_index)
+        self.created_at = created_at or now_str
+        self.updated_at = updated_at or self.created_at
 
     def to_dict(self) -> Dict[str, Any]:
         """序列化為字典用於儲存"""
@@ -94,7 +99,9 @@ class TriggerRule:
             "triggered_price": self.triggered_price,
             "triggered_at": self.triggered_at,
             "note": self.note,
-            "order_index": self.order_index
+            "order_index": self.order_index,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at
         }
 
     @classmethod
@@ -113,7 +120,9 @@ class TriggerRule:
             triggered_price=data.get("triggered_price"),
             triggered_at=data.get("triggered_at"),
             note=data.get("note", ""),
-            order_index=data.get("order_index", 0)
+            order_index=data.get("order_index", 0),
+            created_at=data.get("created_at"),
+            updated_at=data.get("updated_at")
         )
 
 
@@ -170,6 +179,7 @@ class TriggerEngine:
     ) -> TriggerRule:
         """新增或更新觸價條件"""
         code = code.strip().upper()
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if code in self.rules:
             rule = self.rules[code]
             if name:
@@ -177,6 +187,7 @@ class TriggerEngine:
             rule.upper_bound = upper_bound
             rule.lower_bound = lower_bound
             rule.note = note
+            rule.updated_at = now_str
             # 如果修改規則，自動重置為 Active
             rule.status = STATUS_ACTIVE
             rule.triggered_type = None
@@ -190,7 +201,9 @@ class TriggerEngine:
                 lower_bound=lower_bound,
                 status=STATUS_ACTIVE,
                 note=note,
-                order_index=len(self.rules)
+                order_index=len(self.rules),
+                created_at=now_str,
+                updated_at=now_str
             )
             self.rules[code] = rule
 

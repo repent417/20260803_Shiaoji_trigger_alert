@@ -32,6 +32,8 @@ class TestTriggerEngine(unittest.TestCase):
         self.assertEqual(rule.upper_bound, 880.0)
         self.assertEqual(rule.lower_bound, 820.0)
         self.assertEqual(rule.status, STATUS_ACTIVE)
+        self.assertIsNotNone(rule.created_at)
+        self.assertIsNotNone(rule.updated_at)
 
     def test_upper_trigger(self):
         self.engine.add_or_update_rule(
