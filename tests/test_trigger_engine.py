@@ -16,8 +16,12 @@ class TestTriggerEngine(unittest.TestCase):
         self.notifier = Notifier()
         self.engine = TriggerEngine(notifier=self.notifier, storage=self.storage)
 
-    def tearDown(self):
-        self.temp_dir.cleanup()
+    def test_sanitize_filename(self):
+        from src.storage import sanitize_filename
+        long_name = "a" * 100 + ".json"
+        sanitized = sanitize_filename(long_name, 70)
+        self.assertLessEqual(len(os.path.basename(sanitized)), 70)
+        self.assertTrue(sanitized.endswith(".json"))
 
     def test_add_rule(self):
         rule = self.engine.add_or_update_rule(

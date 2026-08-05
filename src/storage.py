@@ -9,9 +9,18 @@ from typing import Dict, Any, List
 
 logger = logging.getLogger(__name__)
 
+def sanitize_filename(filepath: str, max_length: int = 70) -> str:
+    """限制檔名 (包含副檔名) 最大長度不超過 max_length (預設 70 個字)"""
+    dirname, filename = os.path.split(filepath)
+    name, ext = os.path.splitext(filename)
+    max_name_len = max_length - len(ext)
+    if max_name_len > 0 and len(name) > max_name_len:
+        filename = name[:max_name_len] + ext
+    return os.path.join(dirname, filename) if dirname else filename
+
 class StorageManager:
     def __init__(self, filepath: str = os.path.join("data", "alert_rules.json")):
-        self.filepath = filepath
+        self.filepath = sanitize_filename(filepath, 70)
         self._ensure_dir()
 
     def _ensure_dir(self):
