@@ -178,11 +178,13 @@ class MainGUI(tk.Tk):
         ttk.Label(form_grid, text="價格上界 (突破通知):").grid(row=0, column=4, sticky=tk.W, padx=5, pady=5)
         self.ent_upper = ttk.Entry(form_grid, width=12, font=("Microsoft JhengHei", 10, "bold"), foreground="#CC0000")
         self.ent_upper.grid(row=0, column=5, sticky=tk.W, padx=5, pady=5)
+        self.ent_upper.bind("<KeyRelease>", self._on_float_entry_keyup)
 
         # 價格下界 (跌破)
         ttk.Label(form_grid, text="價格下界 (跌破通知):").grid(row=0, column=6, sticky=tk.W, padx=5, pady=5)
         self.ent_lower = ttk.Entry(form_grid, width=12, font=("Microsoft JhengHei", 10, "bold"), foreground="#008000")
         self.ent_lower.grid(row=0, column=7, sticky=tk.W, padx=5, pady=5)
+        self.ent_lower.bind("<KeyRelease>", self._on_float_entry_keyup)
 
         # 備註
         ttk.Label(form_grid, text="備註說明:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
@@ -599,6 +601,17 @@ class MainGUI(tk.Tk):
         
         self._update_connection_status_ui()
 
+    def _on_float_entry_keyup(self, event):
+        """輸入框實時防錯：將中文/全角句號『。』、『．』或千分位『，』自動轉譯為半角小數點『.』"""
+        widget = event.widget
+        val = widget.get()
+        new_val = val.replace("．", ".").replace("。", ".").replace("，", "").replace(",", "")
+        if val != new_val:
+            cursor_pos = widget.index(tk.INSERT)
+            widget.delete(0, tk.END)
+            widget.insert(0, new_val)
+            widget.icursor(cursor_pos)
+
     def _on_code_focus_out(self, event=None):
         """輸入股票代號後自動查詢股票名稱"""
         code = self.ent_code.get().strip().upper()
@@ -611,8 +624,8 @@ class MainGUI(tk.Tk):
         """點擊 [儲存/更新觸價單]"""
         code = self.ent_code.get().strip().upper()
         name = self.ent_name.get().strip()
-        upper_raw = self.ent_upper.get().strip()
-        lower_raw = self.ent_lower.get().strip()
+        upper_raw = self.ent_upper.get().strip().replace("．", ".").replace("。", ".").replace(",", "")
+        lower_raw = self.ent_lower.get().strip().replace("．", ".").replace("。", ".").replace(",", "")
         note = self.ent_note.get().strip()
 
         if not code:
@@ -626,14 +639,14 @@ class MainGUI(tk.Tk):
             try:
                 upper_val = float(upper_raw)
             except ValueError:
-                messagebox.showerror("格式錯誤", "價格上界必須為數字！")
+                messagebox.showerror("格式錯誤", f"價格上界 [{upper_raw}] 必須為有效數字！")
                 return
 
         if lower_raw:
             try:
                 lower_val = float(lower_raw)
             except ValueError:
-                messagebox.showerror("格式錯誤", "價格下界必須為數字！")
+                messagebox.showerror("格式錯誤", f"價格下界 [{lower_raw}] 必須為有效數字！")
                 return
 
         if upper_val is None and lower_val is None:
