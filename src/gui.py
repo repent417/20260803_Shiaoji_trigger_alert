@@ -49,6 +49,8 @@ class MainGUI(tk.Tk):
         self._is_closing = False
         self.is_network_connected = is_internet_available()
         self.network_warned = False
+        self._is_reconnecting_in_progress = False
+        self._last_reconnect_time = 0.0
         self._drag_item = None
         self.sort_state = None  # None (手動自訂) | ("code", "ASC") | ("code", "DESC") | ("status", "ASC") | ("status", "DESC")
         self._cell_labels: Dict[str, tk.Label] = {}  # 專屬於「漲跌幅」單欄的文字標籤字典
@@ -349,10 +351,12 @@ class MainGUI(tk.Tk):
                     self.is_network_connected = connected
                     self.gui_queue.put(("NETWORK_STATUS_CHANGED", connected))
                 
-                # 若網路連線恢復，且先前曾發出斷線警示或處於重連狀態，則自動觸發 API 重連
+                # 若網路連線恢復，且先前曾發出斷線警示或處於重連狀態，冷卻時間超過 10 秒且非執行中，則觸發 API 重連
+                now = time.time()
                 if connected and (self.network_warned or reconnecting):
-                    reconnecting = False
-                    self.gui_queue.put(("AUTO_RECONNECT", None))
+                    if not self._is_reconnecting_in_progress and (now - self._last_reconnect_time >= 10.0):
+                        reconnecting = False
+                        self.gui_queue.put(("AUTO_RECONNECT", None))
                 elif not connected:
                     reconnecting = True
 
@@ -404,19 +408,31 @@ class MainGUI(tk.Tk):
                         self.btn_login.config(text="⏳ 自動重連中...", style="Warning.TButton")
 
                 elif msg_type == "AUTO_RECONNECT":
+                    # 防範多執行緒重複觸發重連
+                    if self._is_reconnecting_in_progress:
+                        continue
+
+                    self._is_reconnecting_in_progress = True
+                    self._last_reconnect_time = time.time()
+
                     # 自動執行背景重新登入 API 與行情訂閱
                     def do_reconnect():
-                        success = self.client.login()
-                        if success:
-                            for code in self.engine.rules.keys():
-                                self.client.subscribe(code)
-                            self.gui_queue.put(("AUTO_RECONNECT_SUCCESS", None))
-                        else:
+                        try:
+                            success = self.client.login()
+                            if success:
+                                for code in self.engine.rules.keys():
+                                    self.client.subscribe(code)
+                                self.gui_queue.put(("AUTO_RECONNECT_SUCCESS", None))
+                            else:
+                                self.gui_queue.put(("AUTO_RECONNECT_FAILED", None))
+                        except Exception as e:
+                            logger.error(f"背景重連過程發生例外: {e}")
                             self.gui_queue.put(("AUTO_RECONNECT_FAILED", None))
 
                     threading.Thread(target=do_reconnect, daemon=True).start()
 
                 elif msg_type == "AUTO_RECONNECT_SUCCESS":
+                    self._is_reconnecting_in_progress = False
                     self.network_warned = False
                     self.lbl_status_msg.config(text="✅ 網路已連線！API 自動登入成功並已恢復即時行情監控。")
                     self.notifier.notify(
@@ -428,7 +444,8 @@ class MainGUI(tk.Tk):
                     self._update_connection_status_ui()
 
                 elif msg_type == "AUTO_RECONNECT_FAILED":
-                    self.lbl_status_msg.config(text="⚠️ 自動重連登入失敗，將於幾秒後自動重試，亦可點擊右上方手動重連。")
+                    self._is_reconnecting_in_progress = False
+                    self.lbl_status_msg.config(text="⚠️ 自動重連登入失敗（將於 10 秒後自動重試，亦可點擊右上方手動重連）。")
                     self.btn_login.config(text="🔄 點擊重連", style="Warning.TButton")
 
         except Exception as e:

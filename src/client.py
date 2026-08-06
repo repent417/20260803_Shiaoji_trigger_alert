@@ -47,6 +47,7 @@ class ShioajiClientWrapper:
         self.subscribed_codes = set()
         self.code_alias_map: Dict[str, str] = {}  # 紀錄 (TXFH6 / TXFR1 -> TXF) 等行情與規則對照
         self.tick_callback = tick_callback  # 簽名: (code, price, change, change_rate)
+        self._login_lock = threading.Lock()
 
         # Mock 模擬發送器
         self.mock_running = False
@@ -61,8 +62,20 @@ class ShioajiClientWrapper:
             "TMF": 23500.0
         }
 
+    def logout(self):
+        """安全登出與釋放 Shioaji 連線資源"""
+        if self.api:
+            try:
+                logger.info("正在釋放與清理前次 Shioaji API 連線資源...")
+                if self.is_logged_in:
+                    self.api.logout()
+            except Exception as e:
+                logger.warning(f"Shioaji 登出清理過程非致命例外: {e}")
+        self.is_logged_in = False
+        self.api = None
+
     def login(self) -> bool:
-        """執行 Shioaji 登入"""
+        """執行 Shioaji 登入 (具備併發鎖、舊連線清理與 451 異常防護)"""
         if not SHIOAJI_AVAILABLE:
             logger.info("Shioaji 套件未載入，跳過線上 API 登入。")
             return False
@@ -71,7 +84,15 @@ class ShioajiClientWrapper:
             logger.warning("未於 .env 設定有效的 API_KEY，將無法完成 API 登入。")
             return False
 
+        # 防止多執行緒重複觸發登入
+        if not self._login_lock.acquire(blocking=False):
+            logger.warning("另一個 Shioaji 登入流程正在進行中，跳過重疊登入。")
+            return False
+
         try:
+            # 1. 先安全清理前次舊連線
+            self.logout()
+
             logger.info(f"正在連線 永豐金 Shioaji API (simulation={self.simulation})...")
             self.api = sj.Shioaji(simulation=self.simulation)
             
@@ -83,6 +104,18 @@ class ShioajiClientWrapper:
                 login_kwargs["person_id"] = self.person_id
 
             accounts = self.api.login(**login_kwargs)
+
+            # 檢驗回傳物件 (防範 451 Too Many Connections 字典或無效帳號)
+            if isinstance(accounts, dict):
+                logger.error(f"Shioaji 登入失敗 (API 回應非預期字典): {accounts}")
+                self.logout()
+                return False
+
+            if not accounts:
+                logger.error("Shioaji 登入失敗: 未取得可用帳號")
+                self.logout()
+                return False
+
             logger.info(f"Shioaji 登入成功！可用帳號：{accounts}")
             self.is_logged_in = True
 
@@ -92,8 +125,10 @@ class ShioajiClientWrapper:
 
         except Exception as e:
             logger.error(f"Shioaji 登入過程發生例外: {e}")
-            self.is_logged_in = False
+            self.logout()
             return False
+        finally:
+            self._login_lock.release()
 
     def _setup_callbacks(self):
         """設置 Shioaji Tick 回呼函數 (股票與期貨)"""
