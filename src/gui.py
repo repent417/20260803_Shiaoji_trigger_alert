@@ -1064,7 +1064,6 @@ class MainGUI(tk.Tk):
         if item_id == self._hover_item:
             bg_color = "#EBF5FB"
 
-        self.update_idletasks()
         bbox = self.tree.bbox(item_id, "change")
         if not bbox or len(bbox) < 4 or bbox[2] <= 0:
             if item_id in self._cell_labels:
