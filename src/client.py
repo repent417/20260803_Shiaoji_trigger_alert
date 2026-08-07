@@ -244,6 +244,48 @@ class ShioajiClientWrapper:
 
         return {"code": user_code, "name": name}
 
+    def get_snapshot_price(self, code: str) -> Optional[Dict[str, float]]:
+        """
+        向 Shioaji 查詢個股/期貨之盤後快照與前一根收盤價資訊
+        回傳: {"price": float, "change": float, "change_rate": float} 或 None
+        """
+        user_code = code.strip().upper()
+        if self.is_logged_in and self.api:
+            contract = self.get_contract(user_code)
+            if contract:
+                try:
+                    snapshots = self.api.snapshots([contract])
+                    if snapshots and len(snapshots) > 0:
+                        snap = snapshots[0]
+                        close = float(getattr(snap, 'close', 0.0))
+                        ref = float(getattr(snap, 'reference_price', getattr(snap, 'open', close)))
+                        change = float(getattr(snap, 'change_price', getattr(snap, 'price_chg', close - ref if ref > 0 else 0.0)))
+                        change_rate = float(getattr(snap, 'pct_chg', getattr(snap, 'change_rate', (change / ref * 100.0) if ref > 0 else 0.0)))
+
+                        if close <= 0 and ref > 0:
+                            close = ref
+
+                        if close > 0:
+                            logger.info(f"已取得 [{user_code}] 快照/收盤價 = ${close:.2f} (漲跌 {change:.2f}, {change_rate:.2f}%)")
+                            return {
+                                "price": close,
+                                "change": change,
+                                "change_rate": change_rate
+                            }
+                except Exception as e:
+                    logger.warning(f"查詢 [{user_code}] 快照失敗: {e}")
+
+        # 若 Mock 模式或線上無資料，使用預設 Mock 初始價格
+        mock_p = self.mock_prices.get(user_code)
+        if mock_p and mock_p > 0:
+            return {
+                "price": mock_p,
+                "change": 0.0,
+                "change_rate": 0.0
+            }
+
+        return None
+
     def subscribe(self, code: str) -> bool:
         """訂閱指定股票或期貨的即時行情"""
         user_code = code.strip().upper()

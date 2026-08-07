@@ -560,6 +560,12 @@ class MainGUI(tk.Tk):
             rules_list.sort(key=lambda r: r.status, reverse=(self.sort_state[1] == "DESC"))
 
         for rule in rules_list:
+            if rule.last_price <= 0:
+                snapshot = self.client.get_snapshot_price(rule.code)
+                if snapshot:
+                    rule.last_price = snapshot["price"]
+                    rule.change = snapshot["change"]
+                    rule.change_rate = snapshot["change_rate"]
             self._update_rule_in_treeview(rule)
             # 自動訂閱
             self.client.subscribe(rule.code)
@@ -682,6 +688,15 @@ class MainGUI(tk.Tk):
             lower_bound=lower_val,
             note=note
         )
+
+        # 若非開盤時間尚無即時 Tick，自動抓取前一根收盤價/快照檔當作初始顯示價格
+        if rule.last_price <= 0:
+            snapshot = self.client.get_snapshot_price(code)
+            if snapshot:
+                rule.last_price = snapshot["price"]
+                rule.change = snapshot["change"]
+                rule.change_rate = snapshot["change_rate"]
+                self._update_rule_in_treeview(rule)
 
         # 向 Client 訂閱行情
         self.client.subscribe(code)
