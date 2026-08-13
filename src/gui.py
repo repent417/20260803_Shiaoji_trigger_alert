@@ -28,6 +28,14 @@ class MainGUI(tk.Tk):
         self.geometry("1300x840")
         self.minsize(1000, 680)
 
+        # 設定視窗圖示 (target_app.ico)
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "target_app.ico")
+        if os.path.exists(icon_path):
+            try:
+                self.iconbitmap(icon_path)
+            except Exception as e:
+                logger.warning(f"無法載入視窗圖示: {e}")
+
         # 核心模組初始化
         self.notifier = Notifier()
         self.storage = StorageManager()
