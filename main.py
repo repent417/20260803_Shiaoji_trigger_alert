@@ -18,6 +18,13 @@ logger = logging.getLogger(__name__)
 from src.gui import MainGUI
 
 def main():
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("shioaji.trigger.alert.gui.v1")
+        except Exception:
+            pass
+
     logger.info("正在啟動 永豐金 Shioaji 即時股價觸價通知系統 GUI...")
     try:
         app = MainGUI()

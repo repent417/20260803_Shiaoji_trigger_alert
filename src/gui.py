@@ -28,8 +28,11 @@ class MainGUI(tk.Tk):
         self.geometry("1300x840")
         self.minsize(1000, 680)
 
-        # 設定視窗圖示 (target_app.ico)
-        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "target_app.ico")
+        # 設定視窗圖示 (優先載入本機 C: 磁碟之 target_app.ico，防範開機時 G: 雲端硬碟尚未掛載)
+        local_ico = os.path.join(os.getenv("LOCALAPPDATA", ""), "ShioajiAlert", "target_app.ico")
+        proj_ico = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "target_app.ico")
+        icon_path = local_ico if os.path.exists(local_ico) else proj_ico
+
         if os.path.exists(icon_path):
             try:
                 self.iconbitmap(icon_path)
