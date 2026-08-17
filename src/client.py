@@ -273,7 +273,11 @@ class ShioajiClientWrapper:
                                 "change_rate": change_rate
                             }
                 except Exception as e:
-                    logger.warning(f"查詢 [{user_code}] 快照失敗: {e}")
+                    err_msg = str(e)
+                    logger.warning(f"查詢 [{user_code}] 快照失敗: {err_msg}")
+                    if "401" in err_msg or "expired" in err_msg.lower():
+                        logger.warning("偵測到 Shioaji Token 已過期 (401)，自動標記連線失效以觸發背景重新登入...")
+                        self.is_logged_in = False
 
         # 若 Mock 模式或線上無資料，使用預設 Mock 初始價格
         mock_p = self.mock_prices.get(user_code)
@@ -313,7 +317,11 @@ class ShioajiClientWrapper:
                     logger.info(f"已向 Shioaji 訂閱商品 [{user_code} (實際代號 {actual_code})] 即時 Tick 行情")
                     return True
                 except Exception as e:
-                    logger.error(f"Shioaji 訂閱 [{user_code}] 失敗: {e}")
+                    err_msg = str(e)
+                    logger.error(f"Shioaji 訂閱 [{user_code}] 失敗: {err_msg}")
+                    if "401" in err_msg or "expired" in err_msg.lower():
+                        logger.warning("偵測到 Shioaji Token 已過期 (401)，自動標記連線失效以觸發背景重新登入...")
+                        self.is_logged_in = False
             else:
                 logger.warning(f"無法找到 [{user_code}] 之合約，仍保留訂閱名稱")
                 self.subscribed_codes.add(user_code)

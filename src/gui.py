@@ -16,7 +16,7 @@ import time
 from src.storage import StorageManager
 from src.notifier import Notifier
 from src.trigger_engine import TriggerEngine, TriggerRule, STATUS_ACTIVE, STATUS_TRIGGERED, STATUS_PAUSED
-from src.client import ShioajiClientWrapper, is_internet_available
+from src.client import ShioajiClientWrapper, is_internet_available, SHIOAJI_AVAILABLE
 
 logger = logging.getLogger(__name__)
 
@@ -362,9 +362,11 @@ class MainGUI(tk.Tk):
                     self.is_network_connected = connected
                     self.gui_queue.put(("NETWORK_STATUS_CHANGED", connected))
                 
-                # 若網路連線恢復，且先前曾發出斷線警示或處於重連狀態，冷卻時間超過 10 秒且非執行中，則觸發 API 重連
+                # 若網路連線恢復且先前曾發出斷線警示、處於重連狀態、或 API Token 已過期 (is_logged_in 為 False)
+                # 且冷卻時間超過 10 秒非執行中，則自動發送 AUTO_RECONNECT 進行重新登入
                 now = time.time()
-                if connected and (self.network_warned or reconnecting):
+                need_reconnect = connected and (self.network_warned or reconnecting or not self.client.is_logged_in)
+                if need_reconnect and SHIOAJI_AVAILABLE and self.client.api_key and self.client.api_key != "YOUR_API_KEY":
                     if not self._is_reconnecting_in_progress and (now - self._last_reconnect_time >= 10.0):
                         reconnecting = False
                         self.gui_queue.put(("AUTO_RECONNECT", None))
