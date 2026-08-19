@@ -588,9 +588,6 @@ class MainGUI(tk.Tk):
         elif self.client.is_logged_in:
             self.lbl_api_status.config(text="🟢 Shioaji: 已連線", bg="#28A745", fg="#FFFFFF")
             self.btn_login.config(text="🔑 登入 API", style="Primary.TButton")
-        elif self.client.mock_running:
-            self.lbl_api_status.config(text="🟡 模擬行情測試中", bg="#FFC107", fg="#000000")
-            self.btn_login.config(text="🔑 登入 API", style="Primary.TButton")
         else:
             self.lbl_api_status.config(text="⚪ Shioaji: 離線", bg="#555555", fg="#FFFFFF")
             self.btn_login.config(text="🔑 登入 API", style="Primary.TButton")
