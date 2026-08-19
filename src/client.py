@@ -279,14 +279,15 @@ class ShioajiClientWrapper:
                         logger.warning("偵測到 Shioaji Token 已過期 (401)，自動標記連線失效以觸發背景重新登入...")
                         self.is_logged_in = False
 
-        # 若 Mock 模式或線上無資料，使用預設 Mock 初始價格
-        mock_p = self.mock_prices.get(user_code)
-        if mock_p and mock_p > 0:
-            return {
-                "price": mock_p,
-                "change": 0.0,
-                "change_rate": 0.0
-            }
+        # 只有在使用者明確開啟 Mock 模擬發送器時，才回傳預設 Mock 初始價格
+        if self.mock_running:
+            mock_p = self.mock_prices.get(user_code)
+            if mock_p and mock_p > 0:
+                return {
+                    "price": mock_p,
+                    "change": 0.0,
+                    "change_rate": 0.0
+                }
 
         return None
 
