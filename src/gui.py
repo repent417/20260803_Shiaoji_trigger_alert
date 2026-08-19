@@ -448,6 +448,7 @@ class MainGUI(tk.Tk):
                     self._is_reconnecting_in_progress = False
                     self.network_warned = False
                     self.lbl_status_msg.config(text="✅ 網路已連線！API 自動登入成功並已恢復即時行情監控。")
+                    self._fetch_snapshots_for_empty_rules()
                     self.notifier.notify(
                         title="網路連線恢復",
                         message="Shioaji API 自動重新登入成功，即時行情觸價監控已全面自動恢復！",
@@ -622,6 +623,23 @@ class MainGUI(tk.Tk):
 
     # --- 使用者互動與動作處理 ---
 
+    def _fetch_snapshots_for_empty_rules(self):
+        """登入成功後，針對尚無成交價 (last_price <= 0) 的規則主動向 Shioaji 查詢盤後快照價"""
+        if not self.client.is_logged_in:
+            return
+        updated = False
+        for rule in self.engine.rules.values():
+            if rule.last_price <= 0:
+                snapshot = self.client.get_snapshot_price(rule.code)
+                if snapshot:
+                    rule.last_price = snapshot["price"]
+                    rule.change = snapshot["change"]
+                    rule.change_rate = snapshot["change_rate"]
+                    self._update_rule_in_treeview(rule)
+                    updated = True
+        if updated:
+            self._update_all_cell_overlays()
+
     def _auto_start(self):
         """嘗試登入 API；只有在未設定有效的 API KEY 時，才自動開啟 Mock 模擬行情"""
         success = self.client.login()
@@ -639,6 +657,8 @@ class MainGUI(tk.Tk):
             # 重新訂閱
             for code in self.engine.rules.keys():
                 self.client.subscribe(code)
+            # 主動抓取尚無價格欄位之盤後快照收盤價
+            self._fetch_snapshots_for_empty_rules()
         
         self._update_connection_status_ui()
 
