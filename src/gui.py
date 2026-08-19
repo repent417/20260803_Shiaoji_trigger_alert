@@ -161,9 +161,6 @@ class MainGUI(tk.Tk):
         self.btn_login = ttk.Button(right_panel, text="🔑 登入 API", command=self._on_click_login, style="Primary.TButton")
         self.btn_login.pack(side=tk.LEFT, padx=4)
 
-        self.btn_mock = ttk.Button(right_panel, text="🧪 啟動模擬行情", command=self._on_toggle_mock)
-        self.btn_mock.pack(side=tk.LEFT, padx=4)
-
         btn_tg_config = ttk.Button(right_panel, text="⚙️ Telegram 設定", command=self._on_click_tg_config)
         btn_tg_config.pack(side=tk.LEFT, padx=4)
 
@@ -332,9 +329,6 @@ class MainGUI(tk.Tk):
         self.context_menu.add_command(label="🔝 移至最頂部", command=lambda: self._on_menu_move("TOP"))
         self.context_menu.add_command(label="🔚 移至最底部", command=lambda: self._on_menu_move("BOTTOM"))
         self.context_menu.add_command(label="↺ 恢復自訂排序", command=self._reset_sort_to_custom)
-        self.context_menu.add_separator()
-        self.context_menu.add_command(label="⚡ 手動模擬價格突破測試", command=self._on_menu_mock_upper)
-        self.context_menu.add_command(label="⚡ 手動模擬價格跌破測試", command=self._on_menu_mock_lower)
         self.context_menu.add_separator()
         self.context_menu.add_command(label="❌ 刪除此觸價單", command=self._on_menu_delete)
 
@@ -641,17 +635,11 @@ class MainGUI(tk.Tk):
             self._update_all_cell_overlays()
 
     def _auto_start(self):
-        """嘗試登入 API；只有在未設定有效的 API KEY 時，才自動開啟 Mock 模擬行情"""
+        """嘗試登入 API」"""
         success = self.client.login()
         if not success:
-            has_valid_key = bool(self.client.api_key and self.client.api_key != "YOUR_API_KEY")
-            if has_valid_key:
-                logger.warning("Shioaji API 初始連線未成功（可能處於盤後結算或網路重連中），維持真實收盤快照價展示，不觸發 Mock 假行情。")
-                self.lbl_status_msg.config(text="⚠️ Shioaji API 暫時離線或處於盤後結算中，已自動維持真實收盤快照價展示（不觸發假行情）。")
-            else:
-                self.lbl_status_msg.config(text="未偵測到有效的 Shioaji API KEY，已自動開啟模擬行情測試模式。")
-                self.client.start_mock_ticks()
-                self.btn_mock.config(text="⏹️ 停止模擬行情")
+            logger.warning("Shioaji API 初始連線未成功（可能處於盤後結算或網路重連中），維持真實收盤快照價展示。")
+            self.lbl_status_msg.config(text="⚠️ Shioaji API 暫時離線或處於盤後結算中，已自動維持真實收盤快照價展示。")
         else:
             self.lbl_status_msg.config(text="Shioaji API 登入成功，正在即時接收盤中行情...")
             # 重新訂閱
@@ -805,21 +793,6 @@ class MainGUI(tk.Tk):
             )
         else:
             messagebox.showerror("登入失敗", "Shioaji API 登入失敗！請確認 .env 設定與 API KEY。")
-        self._update_connection_status_ui()
-
-    def _on_toggle_mock(self):
-        """開關模擬行情測試」"""
-        if self.client.mock_running:
-            self.client.stop_mock_ticks()
-            self.btn_mock.config(text="🧪 啟動模擬行情")
-            self.lbl_status_msg.config(text="已停止模擬行情。")
-        else:
-            # 確保已知股票都有在 mock 設定中
-            for code in self.engine.rules.keys():
-                self.client.subscribe(code)
-            self.client.start_mock_ticks()
-            self.btn_mock.config(text="⏹️ 停止模擬行情")
-            self.lbl_status_msg.config(text="已啟動模擬行情發送器。")
         self._update_connection_status_ui()
 
     def _on_click_tg_config(self):
@@ -1006,22 +979,6 @@ class MainGUI(tk.Tk):
                 self._reload_all_rules_in_ui()
                 self.tree.selection_set(code)
 
-    def _on_menu_mock_upper(self):
-        """手動注入突破價」"""
-        code = self._get_selected_code()
-        if code and code in self.engine.rules:
-            rule = self.engine.rules[code]
-            target_price = (rule.upper_bound or 100.0) + 5.0
-            self.client.trigger_manual_mock_tick(code, target_price)
-
-    def _on_menu_mock_lower(self):
-        """手動注入跌破價」"""
-        code = self._get_selected_code()
-        if code and code in self.engine.rules:
-            rule = self.engine.rules[code]
-            target_price = (rule.lower_bound or 100.0) - 5.0
-            self.client.trigger_manual_mock_tick(code, target_price)
-
     def _on_menu_delete(self):
         code = self._get_selected_code()
         if code:
@@ -1171,7 +1128,6 @@ class MainGUI(tk.Tk):
         """完全關閉應用程式與清除執行緒」"""
         self._is_closing = True
         try:
-            self.client.stop_mock_ticks()
             self.engine.save_to_storage()
         except Exception:
             pass

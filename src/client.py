@@ -49,18 +49,7 @@ class ShioajiClientWrapper:
         self.tick_callback = tick_callback  # 簽名: (code, price, change, change_rate)
         self._login_lock = threading.Lock()
 
-        # Mock 模擬發送器
-        self.mock_running = False
-        self.mock_thread = None
-        self.mock_prices: Dict[str, float] = {
-            "2330": 850.0,
-            "2317": 200.0,
-            "2454": 1200.0,
-            "0050": 160.0,
-            "TXF": 23500.0,
-            "MXF": 23500.0,
-            "TMF": 23500.0
-        }
+        self._login_lock = threading.Lock()
 
     def logout(self):
         """安全登出與釋放 Shioaji 連線資源"""
@@ -279,16 +268,6 @@ class ShioajiClientWrapper:
                         logger.warning("偵測到 Shioaji Token 已過期 (401)，自動標記連線失效以觸發背景重新登入...")
                         self.is_logged_in = False
 
-        # 只有在使用者明確開啟 Mock 模擬發送器時，才回傳預設 Mock 初始價格
-        if self.mock_running:
-            mock_p = self.mock_prices.get(user_code)
-            if mock_p and mock_p > 0:
-                return {
-                    "price": mock_p,
-                    "change": 0.0,
-                    "change_rate": 0.0
-                }
-
         return None
 
     def subscribe(self, code: str) -> bool:
@@ -329,13 +308,6 @@ class ShioajiClientWrapper:
         else:
             self.subscribed_codes.add(user_code)
 
-        # 若離線或找不到合約，設定預設 mock 價格
-        if user_code not in self.mock_prices:
-            if user_code in ["TXF", "TXFR1", "TX00", "FITX", "MXF", "MXFR1", "TMF", "TMFR1"]:
-                self.mock_prices[user_code] = 23500.0
-            else:
-                self.mock_prices[user_code] = 100.0
-
         return False
 
     def unsubscribe(self, code: str) -> bool:
@@ -359,52 +331,3 @@ class ShioajiClientWrapper:
                     logger.error(f"Shioaji 取消訂閱 [{code}] 失敗: {e}")
 
         return False
-
-    # --- 模擬 Tick 觸發器 (用於無 API Key 或盤後測試 GUI) ---
-
-    def start_mock_ticks(self, target_codes: Optional[list] = None):
-        """啟動模擬行情發送器"""
-        if self.mock_running:
-            return
-
-        self.mock_running = True
-        self.mock_thread = threading.Thread(target=self._mock_loop, daemon=True)
-        self.mock_thread.start()
-        logger.info("已啟動 Mock 模擬行情發送器")
-
-    def stop_mock_ticks(self):
-        """停止模擬行情發送器"""
-        self.mock_running = False
-        logger.info("已停止 Mock 模擬行情發送器")
-
-    def _mock_loop(self):
-        """模擬價格波動與發送循環"""
-        while self.mock_running:
-            codes_to_run = list(self.subscribed_codes) or list(self.mock_prices.keys())
-            for code in codes_to_run:
-                if not self.mock_running:
-                    break
-                curr_price = self.mock_prices.get(code, 100.0)
-                # 隨機價格波動 ±0.5% ~ ±1.5%
-                delta_pct = random.uniform(-0.012, 0.012)
-                new_price = round(curr_price * (1 + delta_pct), 2)
-                if new_price <= 0.1:
-                    new_price = 1.0
-                
-                self.mock_prices[code] = new_price
-                change = round(new_price - curr_price, 2)
-                change_rate = round((change / curr_price) * 100, 2)
-
-                if self.tick_callback:
-                    self.tick_callback(code, new_price, change, change_rate)
-
-                time.sleep(1.0)
-            time.sleep(1.0)
-
-    def trigger_manual_mock_tick(self, code: str, price: float):
-        """手動注入指定價格的 Mock Tick (利於測試突破/跌破)"""
-        code = code.strip().upper()
-        self.mock_prices[code] = price
-        if self.tick_callback:
-            self.tick_callback(code, price, 0.0, 0.0)
-        logger.info(f"手動注入 Mock Tick [{code}] 價格 = ${price}")
