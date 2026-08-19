@@ -1051,7 +1051,10 @@ class MainGUI(tk.Tk):
             return
 
         # 確定前景色
-        if rule.change > 0:
+        if rule.last_price <= 0:
+            fg_color = "#888888"  # 未有價格時顯示灰色 --
+            change_str = "--"
+        elif rule.change > 0:
             fg_color = "#CC0000"  # 上漲純紅字
             change_str = f"▲ +{rule.change:.2f} (+{rule.change_rate:.2f}%)"
         elif rule.change < 0:
