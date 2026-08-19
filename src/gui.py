@@ -623,12 +623,17 @@ class MainGUI(tk.Tk):
     # --- 使用者互動與動作處理 ---
 
     def _auto_start(self):
-        """嘗試登入，若離線則啟動 Mock 行情讓使用者開箱即可測試"""
+        """嘗試登入 API；只有在未設定有效的 API KEY 時，才自動開啟 Mock 模擬行情"""
         success = self.client.login()
         if not success:
-            self.lbl_status_msg.config(text="未偵測到有效的 Shioaji API KEY，已自動開啟模擬行情測試模式。")
-            self.client.start_mock_ticks()
-            self.btn_mock.config(text="⏹️ 停止模擬行情")
+            has_valid_key = bool(self.client.api_key and self.client.api_key != "YOUR_API_KEY")
+            if has_valid_key:
+                logger.warning("Shioaji API 初始連線未成功（可能處於盤後結算或網路重連中），維持真實收盤快照價展示，不觸發 Mock 假行情。")
+                self.lbl_status_msg.config(text="⚠️ Shioaji API 暫時離線或處於盤後結算中，已自動維持真實收盤快照價展示（不觸發假行情）。")
+            else:
+                self.lbl_status_msg.config(text="未偵測到有效的 Shioaji API KEY，已自動開啟模擬行情測試模式。")
+                self.client.start_mock_ticks()
+                self.btn_mock.config(text="⏹️ 停止模擬行情")
         else:
             self.lbl_status_msg.config(text="Shioaji API 登入成功，正在即時接收盤中行情...")
             # 重新訂閱
