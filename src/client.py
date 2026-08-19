@@ -268,6 +268,16 @@ class ShioajiClientWrapper:
                         logger.warning("偵測到 Shioaji Token 已過期 (401)，自動標記連線失效以觸發背景重新登入...")
                         self.is_logged_in = False
 
+                # 2. 備援：若盤後整理期間 REST 快照 API 傳回空白，自動使用合約表記憶體內的官方參考收盤價 (contract.reference)
+                ref_price = float(getattr(contract, 'reference', 0.0))
+                if ref_price > 0:
+                    logger.info(f"已採用合約參考收盤價 [{user_code}] = ${ref_price:.2f}")
+                    return {
+                        "price": ref_price,
+                        "change": 0.0,
+                        "change_rate": 0.0
+                    }
+
         return None
 
     def subscribe(self, code: str) -> bool:
