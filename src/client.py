@@ -40,7 +40,7 @@ class ShioajiClientWrapper:
         self.api_key = os.getenv("API_KEY", "").strip("\"'")
         self.secret_key = os.getenv("SECRET_KEY", "").strip("\"'")
         self.person_id = os.getenv("PERSON_ID", "").strip("\"'")
-        self.simulation = os.getenv("SIMULATION", "True").lower() in ("true", "1", "yes")
+        self.simulation = os.getenv("SIMULATION", "False").lower() in ("true", "1", "yes")
 
         self.api = None
         self.is_logged_in = False
