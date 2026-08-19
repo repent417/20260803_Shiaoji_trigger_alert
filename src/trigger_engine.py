@@ -43,8 +43,8 @@ def is_in_trading_hours(code: str, now_dt: Optional[datetime] = None, bypass_for
         return False
     else:
         # 【現股 / 股票 / ETF】交易時間：
-        # 正式盤：09:00:00 ~ 13:30:00 (過濾 08:30 ~ 08:59:59 試撮)
-        if weekday < 5 and time(9, 0, 0) <= now_time <= time(13, 30, 0):
+        # 正式盤：09:00:00 ~ 13:25:00 (過濾 08:30~08:59 盤前試撮與 13:25~13:30 收盤試撮)
+        if weekday < 5 and time(9, 0, 0) <= now_time < time(13, 25, 0):
             return True
         return False
 

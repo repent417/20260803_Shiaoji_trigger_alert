@@ -104,6 +104,10 @@ class TestTriggerEngine(unittest.TestCase):
         dt_open = datetime(2026, 8, 4, 9, 5, 0)
         self.assertTrue(is_in_trading_hours("2330", dt_open))
 
+        # 測試 13:26 現股收盤試撮時間 (應回傳 False，過濾 13:25~13:30 試撮假價格)
+        dt_close_trial = datetime(2026, 8, 4, 13, 26, 0)
+        self.assertFalse(is_in_trading_hours("2330", dt_close_trial))
+
         # 測試 08:40 期貨試撮盤 (應回傳 False)
         self.assertFalse(is_in_trading_hours("TXF", dt_trial))
 
