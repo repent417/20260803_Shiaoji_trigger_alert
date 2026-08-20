@@ -379,8 +379,7 @@ class MainGUI(tk.Tk):
                 msg_type, data = self.gui_queue.get_nowait()
                 if msg_type == "TICK":
                     code, price, change, change_rate = data
-                    bypass = self.client.mock_running
-                    self.engine.process_tick(code, price, change, change_rate, bypass_time_check=bypass)
+                    self.engine.process_tick(code, price, change, change_rate)
 
                 elif msg_type == "RULE_UPDATED":
                     rule, is_deleted = data
